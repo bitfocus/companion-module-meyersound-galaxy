@@ -1,26 +1,32 @@
 {
-	"id": "your-module-name",
-	"name": "your-module-name",
-	"shortname": "module-shortname",
-	"description": "A short one line description of your module",
-	"version": "0.0.0",
+	"id": "meyersound-galaxy",
+	"name": "Meyer Sound Galaxy",
+	"shortname": "Galaxy",
+	"description": "Control a Meyer Sound Galaxy device via TCP",
+	"version": "1.0.0",
 	"license": "MIT",
-	"repository": "git+https://github.com/bitfocus/companion-module-your-module-name.git",
-	"bugs": "https://github.com/bitfocus/companion-module-your-module-name/issues",
+	"repository": "git+https://github.com/bitfocus/companion-module-meyersound-galaxy.git",
+	"bugs": "https://github.com/bitfocus/companion-module-meyersound-galaxy/issues",
 	"maintainers": [
 		{
-			"name": "Your name",
-			"email": "Your email"
+			"name": "Jonathan Jomix Lafontaine",
+			"email": "jonathan_lafontaine@icloud.com"
 		}
 	],
 	"runtime": {
-		"type": "node22",
+		"type": "node18",
 		"api": "nodejs-ipc",
-		"apiVersion": "0.0.0",
-		"entrypoint": "../main.js"
+		"apiVersion": "1.0.0",
+		"entrypoint": "main.js"
 	},
 	"legacyIds": [],
-	"manufacturer": "Your company",
-	"products": ["Your product"],
-	"keywords": []
+	"manufacturer": "Meyer Sound",
+	"products": ["Galaxy"],
+	"keywords": [],
+	"bonjourQueries": {
+		"bonjour_host": {
+			"type": "_galaxy._tcp",
+			"protocol": "tcp"
+		}
+	}
 }
