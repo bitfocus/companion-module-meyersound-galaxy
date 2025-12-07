@@ -1,3 +1,5 @@
+[![Companion Module Checks](https://github.com/bitfocus/companion-module-meyersound-galaxy/actions/workflows/companion-module-checks.yaml/badge.svg)](https://github.com/bitfocus/companion-module-meyersound-galaxy/actions/workflows/companion-module-checks.yaml)
+
 This is the unofficial module for Meyer Sound Galaxy.
 
 Tested with real Galaxy 816 and virtual Galaxy, but should be compatible with 408,816AES. Bluehorn has some difference that needs to be tested.
