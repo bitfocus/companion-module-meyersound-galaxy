@@ -1,5 +1,5 @@
 {
-	"id": "companion-module-meyersound-galaxy",
+	"id": "meyersound-galaxy",
 	"name": "Meyer Sound Galaxy",
 	"shortname": "Galaxy",
 	"description": "Control a Meyer Sound Galaxy device via TCP",
