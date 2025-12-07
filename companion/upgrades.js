@@ -21,8 +21,8 @@ module.exports = [
 			'matrix_gain_nudge_multi': 'matrix_gain_nudge',
 			'matrix_delay_set_multi': 'matrix_delay_set',
 			'system_input_mode_set_multi': 'system_input_mode_set',
-			'output_chase_start': 'system_chase_start',
-			'output_chase_stop': 'system_chase_stop',
+			'system_chase_start': 'output_chase_start',
+			'system_chase_stop': 'output_chase_stop',
 		}
 
 		// Parameter renames for actions

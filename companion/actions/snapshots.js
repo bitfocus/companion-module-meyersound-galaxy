@@ -23,9 +23,9 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		: [{ id: '', label: 'No snapshots available' }]
 	const snapshotBootChoices = [...snapshotDropdownChoices, { id: '-1', label: 'Clear boot snapshot (disable boot)' }]
 
-	// Combined Snapshot Action
+	// Snapshot Action
 	actions['snapshot_combined'] = {
-		name: 'Snapshot: Combined Operations',
+		name: 'Snapshot: Operations',
 		description: 'Perform various snapshot operations from a single action.',
 		options: [
 			{

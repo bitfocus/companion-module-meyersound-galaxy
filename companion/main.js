@@ -185,6 +185,7 @@ class ModuleInstance extends InstanceBase {
 		this.outputHighpass = {}
 		this.outputLowpass = {}
 		this.outputAllpass = {} // { ch: { band: { bypass: bool, frequency: number|null, q: number|null } } }
+		this.outputAtmospheric = {}
 		this.inputGain = {} // { ch: number (dB, 0.1) }
 		this.outputGain = {} // { ch: number (dB, 0.1) }
 		this.matrixGain = {} // { 'mi-mo': number }
@@ -923,6 +924,12 @@ class ModuleInstance extends InstanceBase {
 			return
 		}
 
+		const oatm = this._parseOutputAtmospheric(line)
+		if (oatm) {
+			this._applyOutputAtmospheric(oatm.ch, oatm.field, oatm.value)
+			return
+		}
+
 		// Output U-Shaping bypass
 		const ushBypOut = this._parseOutputUShapingBypass(line)
 		if (ushBypOut) {
@@ -1382,6 +1389,15 @@ class ModuleInstance extends InstanceBase {
 		return `${k}:${Number(ch) || 0}`
 	}
 
+	_clearPrevByButton(kind, ch) {
+		const k = kind === 'output' ? 'output' : 'input'
+		for (const btnId of Object.keys(this._prevByButton[k] || {})) {
+			if (this._prevByButton[k][btnId] && this._prevByButton[k][btnId][ch] !== undefined) {
+				delete this._prevByButton[k][btnId][ch]
+			}
+		}
+	}
+
 	_beginPrevCaptureWindow(kind, ch, btnId, ms = PREV_GAIN_CAPTURE_WINDOW_MS) {
 		const key = this._prevKey(kind, ch)
 		const until = Date.now() + Math.max(50, Number(ms) || PREV_GAIN_CAPTURE_WINDOW_MS)
@@ -1442,6 +1458,16 @@ class ModuleInstance extends InstanceBase {
 		const k = kind === 'output' ? 'output' : 'input'
 		if (btnId && this._prevByButton[k][btnId] && Number.isFinite(this._prevByButton[k][btnId][ch])) {
 			return this._prevByButton[k][btnId][ch]
+		}
+		if (k === 'input' && this._inputGainTrack?.[ch]) {
+			const track = this._inputGainTrack[ch]
+			if (Number.isFinite(track.prevStable)) return track.prevStable
+			if (Number.isFinite(track.stable)) return track.stable
+		}
+		if (k === 'output' && this._outputGainTrack?.[ch]) {
+			const track = this._outputGainTrack[ch]
+			if (Number.isFinite(track.prevStable)) return track.prevStable
+			if (Number.isFinite(track.stable)) return track.stable
 		}
 		if (Number.isFinite(this._prevGain[k][ch])) return this._prevGain[k][ch]
 		return null
@@ -1548,6 +1574,11 @@ class ModuleInstance extends InstanceBase {
 		const b = Math.max(1, Math.min(3, Number(band)))
 		if (!Number.isFinite(c) || !Number.isFinite(b)) return
 
+		// Ensure we stay subscribed to this parameter for external changes
+		if (typeof this._subWrite === 'function') {
+			this._subWrite(`/processing/output/${c}/allpass/${b}/${param}`)
+		}
+
 		if (param === 'band_bypass') {
 			const val = !!rawValue
 			this._cmdSendLine(`/processing/output/${c}/allpass/${b}/band_bypass=${val ? 'true' : 'false'}`)
@@ -1567,7 +1598,7 @@ class ModuleInstance extends InstanceBase {
 		if (param === 'q') {
 			const qVal = Number(rawValue)
 			if (!Number.isFinite(qVal)) return
-			const clamped = Math.max(0.5, Math.min(10, qVal))
+			const clamped = Math.max(0.5, Math.min(12, qVal))
 			this._cmdSendLine(`/processing/output/${c}/allpass/${b}/q=${clamped}`)
 			this._applyOutputAllpass(c, b, 'q', clamped)
 		}
@@ -2362,7 +2393,7 @@ class ModuleInstance extends InstanceBase {
 		if (this.inMute[ch] === val) return
 		this.inMute[ch] = val
 		this.setVariableValues({ [`input_${ch}_mute`]: String(val) })
-		this.checkFeedbacks('input_muted')
+		this.checkFeedbacks('input_muted', 'input_soloed')
 		this.checkFeedbacks('mute_all')
 	}
 	_applyOutMute(ch, val) {
@@ -2426,7 +2457,7 @@ class ModuleInstance extends InstanceBase {
 			const state = !!value
 			if (store.band_bypass === state) return
 			store.band_bypass = state
-			this.setVariableValues({ [`output_${ch}_allpass${band}`]: state ? 'OFF' : 'ON' })
+			this.setVariableValues({ [`output_${ch}_allpass_${band}`]: state ? 'OFF' : 'ON' })
 			this.checkFeedbacks('output_allpass_active')
 			return
 		}
@@ -2437,7 +2468,7 @@ class ModuleInstance extends InstanceBase {
 			if (store.frequency === hz) return
 			store.frequency = hz
 			const str = hz % 1 === 0 ? String(Math.round(hz)) : hz.toFixed(2)
-			this.setVariableValues({ [`output_${ch}_allpass${band}_frequency`]: str })
+			this.setVariableValues({ [`output_${ch}_allpass_${band}_frequency`]: str })
 			return
 		}
 
@@ -2446,8 +2477,42 @@ class ModuleInstance extends InstanceBase {
 			if (!Number.isFinite(qVal)) return
 			if (store.q === qVal) return
 			store.q = qVal
-			const str = qVal % 1 === 0 ? String(Math.round(qVal)) : qVal.toFixed(2)
-			this.setVariableValues({ [`output_${ch}_allpass${band}_q`]: str })
+			const str = qVal.toFixed(2)
+			this.setVariableValues({ [`output_${ch}_allpass_${band}_q`]: str })
+		}
+	}
+
+	_applyOutputAtmospheric(ch, field, value) {
+		if (!this.outputAtmospheric) this.outputAtmospheric = {}
+		if (!this.outputAtmospheric[ch]) this.outputAtmospheric[ch] = {}
+
+		const store = this.outputAtmospheric[ch]
+
+		if (field === 'bypass') {
+			const state = !!value
+			if (store.bypass === state) return
+			store.bypass = state
+			this.setVariableValues({ [`output_${ch}_atmospheric_bypass`]: state ? 'ON' : 'OFF' })
+			return
+		}
+
+		if (field === 'distance') {
+			const dist = Number(value)
+			if (!Number.isFinite(dist)) return
+			if (store.distance === dist) return
+			store.distance = dist
+			const str = Number.isInteger(dist) ? String(dist) : dist.toFixed(2)
+			this.setVariableValues({ [`output_${ch}_atmospheric_distance_m`]: str })
+			return
+		}
+
+		if (field === 'gain') {
+			const gainVal = Number(value)
+			if (!Number.isFinite(gainVal)) return
+			if (store.gain === gainVal) return
+			store.gain = gainVal
+			const str = Number.isInteger(gainVal) ? String(gainVal) : gainVal.toFixed(1)
+			this.setVariableValues({ [`output_${ch}_atmospheric_gain_percent`]: str })
 		}
 	}
 
@@ -2455,6 +2520,53 @@ class ModuleInstance extends InstanceBase {
 		const rounded = roundTenth(clampDb(val))
 		this._maybeCapturePrev('input', ch, rounded)
 		if (this.inputGain[ch] === rounded) return
+
+		// Track stable/previous stable gains (debounced) for reliable "last dB" recall
+		const now = Date.now()
+		if (!this._inputGainTrack) this._inputGainTrack = {}
+		if (!this._inputGainTrack[ch]) {
+			this._inputGainTrack[ch] = {
+				stable: rounded,
+				prevStable: rounded,
+				pending: null,
+				pendingSince: 0,
+			}
+		} else {
+			const t = this._inputGainTrack[ch]
+			if (rounded !== t.stable) {
+				if (t.pending !== rounded) {
+					t.pending = rounded
+					t.pendingSince = now
+					setTimeout(() => {
+						const cur = this._inputGainTrack?.[ch]
+						if (!cur) return
+						if (cur.pending === rounded && cur.pendingSince && Date.now() - cur.pendingSince >= 1000) {
+							if (Number.isFinite(cur.stable)) this._prevGain.input[ch] = cur.stable
+							cur.prevStable = cur.stable
+							cur.stable = rounded
+							cur.pending = null
+							cur.pendingSince = 0
+							this._clearPrevByButton('input', ch)
+						}
+					}, 1050)
+				} else if (t.pendingSince && now - t.pendingSince >= 1000) {
+					if (Number.isFinite(t.stable)) this._prevGain.input[ch] = t.stable
+					t.prevStable = t.stable
+					t.stable = rounded
+					t.pending = null
+					t.pendingSince = 0
+					this._clearPrevByButton('input', ch)
+				}
+			} else {
+				t.pending = null
+				t.pendingSince = 0
+			}
+		}
+		if (this._inputGainTrack?.[ch] && Number.isFinite(this._inputGainTrack[ch].prevStable)) {
+			this._prevGain.input[ch] = this._inputGainTrack[ch].prevStable
+			this._clearPrevByButton('input', ch)
+		}
+
 		this.inputGain[ch] = rounded
 		this.setVariableValues({ [`input_${ch}_gain_db`]: rounded.toFixed(1) })
 		this.checkFeedbacks('input_gain_level')
@@ -2464,6 +2576,53 @@ class ModuleInstance extends InstanceBase {
 		const rounded = roundTenth(clampDb(val))
 		this._maybeCapturePrev('output', ch, rounded)
 		if (this.outputGain[ch] === rounded) return
+
+		// Track stable/previous stable gains (debounced) for reliable "last dB" recall
+		const now = Date.now()
+		if (!this._outputGainTrack) this._outputGainTrack = {}
+		if (!this._outputGainTrack[ch]) {
+			this._outputGainTrack[ch] = {
+				stable: rounded,
+				prevStable: rounded,
+				pending: null,
+				pendingSince: 0,
+			}
+		} else {
+			const t = this._outputGainTrack[ch]
+			if (rounded !== t.stable) {
+				if (t.pending !== rounded) {
+					t.pending = rounded
+					t.pendingSince = now
+					setTimeout(() => {
+						const cur = this._outputGainTrack?.[ch]
+						if (!cur) return
+						if (cur.pending === rounded && cur.pendingSince && Date.now() - cur.pendingSince >= 1000) {
+							if (Number.isFinite(cur.stable)) this._prevGain.output[ch] = cur.stable
+							cur.prevStable = cur.stable
+							cur.stable = rounded
+							cur.pending = null
+							cur.pendingSince = 0
+							this._clearPrevByButton('output', ch)
+						}
+					}, 1050)
+				} else if (t.pendingSince && now - t.pendingSince >= 1000) {
+					if (Number.isFinite(t.stable)) this._prevGain.output[ch] = t.stable
+					t.prevStable = t.stable
+					t.stable = rounded
+					t.pending = null
+					t.pendingSince = 0
+					this._clearPrevByButton('output', ch)
+				}
+			} else {
+				t.pending = null
+				t.pendingSince = 0
+			}
+		}
+		if (this._outputGainTrack?.[ch] && Number.isFinite(this._outputGainTrack[ch].prevStable)) {
+			this._prevGain.output[ch] = this._outputGainTrack[ch].prevStable
+			this._clearPrevByButton('output', ch)
+		}
+
 		this.outputGain[ch] = rounded
 		this.setVariableValues({ [`output_${ch}_gain_db`]: rounded.toFixed(1) })
 		this.checkFeedbacks('output_gain_level')
@@ -3323,6 +3482,23 @@ class ModuleInstance extends InstanceBase {
 			return { ch, band, field: 'q', value: val }
 		}
 		return undefined
+	}
+	_parseOutputAtmospheric(text) {
+		const base = text.match(/\/processing\/output\/(\d+)\/atmospheric\/(bypass|distance|gain)\b/i)
+		if (!base) return undefined
+		const ch = Number(base[1])
+		if (ch < 1 || ch > NUM_OUTPUTS) return undefined
+		const field = base[2].toLowerCase()
+		if (field === 'bypass') {
+			const rhs = this._extractRightHandBool(text)
+			if (rhs == null) return undefined
+			return { ch, field, value: rhs }
+		}
+		const rhs = this._extractRightHandValue(text)
+		if (rhs == null) return undefined
+		const val = Number(rhs)
+		if (!Number.isFinite(val)) return undefined
+		return { ch, field, value: val }
 	}
 	_parseMatrixGain(text) {
 		const m = text.match(/\/processing\/matrix\/(\d+)\/(\d+)\/gain\b/i)

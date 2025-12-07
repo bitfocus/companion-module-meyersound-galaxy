@@ -57,7 +57,9 @@ module.exports = function UpdateFeedbacks(self, NUM_INPUTS, NUM_OUTPUTS) {
 		callback: (fb) => {
 			const ch = Number(fb.options.ch)
 			// Channel is soloed if it's in the solo state
-			return self.inputSoloState?.soloChannels?.has(ch) || false
+			const inSolo = self.inputSoloState?.soloChannels?.has(ch) || false
+			const isMuted = !!self.inMute?.[ch]
+			return inSolo && !isMuted
 		},
 	}
 

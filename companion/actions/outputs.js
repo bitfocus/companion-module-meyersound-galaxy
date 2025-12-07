@@ -2,7 +2,7 @@
 // Output-related actions: mutes, gains, polarity, filters, U-Shaping, Parametric EQ
 
 const { rangeChoices, buildOutputChoices, nn } = require('../helpers')
-const { safeGetChannels } = require('../actions-helpers')
+const { safeGetChannels, speedOfSound_mps } = require('../actions-helpers')
 
 /**
  * Register output-related actions
@@ -14,6 +14,11 @@ const { safeGetChannels } = require('../actions-helpers')
 function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	const outputChoicesNum = rangeChoices(NUM_OUTPUTS, 'Output ')
 	const outputChoicesFriendly = buildOutputChoices(self, NUM_OUTPUTS)
+	const buildRotaryKey = (ev) => {
+		const surf = ev?.surfaceId || ev?.event?.surfaceId || 'default'
+		const ctrl = ev?.controlId || ev?.event?.controlId || null
+		return ctrl ? `${surf}::${ctrl}` : null
+	}
 
 	// =========================
 	// ===== MUTES & SOLO ======
@@ -111,6 +116,16 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 			if (shouldApplySolo) {
 				// Apply solo: unmute selected, mute others
+				const prevMute =
+					(currentSoloState && currentSoloState.prevMute) ||
+					(() => {
+						const snap = {}
+						for (let ch = 1; ch <= NUM_OUTPUTS; ch++) {
+							snap[ch] = !!self?.outMute?.[ch]
+						}
+						return snap
+					})()
+
 				for (let ch = 1; ch <= NUM_OUTPUTS; ch++) {
 					if (soloSet.has(ch)) {
 						if (typeof self._setMute === 'function') {
@@ -122,17 +137,19 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						}
 					}
 				}
-				self.outputSoloState = { soloChannels: soloSet }
+				self.outputSoloState = { soloChannels: soloSet, prevMute }
 				self.log?.('info', `Soloed output channels: ${soloChannels.join(', ')}`)
 			} else {
-				// Unsolo: unmute all
+				// Unsolo: restore previous mute states if known
+				const prevMute = currentSoloState?.prevMute || {}
 				for (let ch = 1; ch <= NUM_OUTPUTS; ch++) {
+					const shouldMute = prevMute[ch] ?? false
 					if (typeof self._setMute === 'function') {
-						self._setMute('output', ch, false)
+						self._setMute('output', ch, shouldMute)
 					}
 				}
 				self.outputSoloState = null
-				self.log?.('info', `Unsolo - unmuted all output channels`)
+				self.log?.('info', `Unsolo - restored previous mute states`)
 			}
 
 			// Update feedbacks
@@ -1472,7 +1489,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 
 	actions['output_gain_set'] = {
-		name: 'Output: Set gain (dB)',
+		name: 'Output: Gain',
 		options: [
 			{
 				type: 'multidropdown',
@@ -1490,6 +1507,8 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: [
 					{ id: 'value', label: 'Specific dB value' },
 					{ id: 'last', label: 'Last dB value' },
+					{ id: 'pair', label: 'Toggle between two values' },
+					{ id: 'nudge', label: 'Nudge (delta)' },
 				],
 			},
 			{
@@ -1502,7 +1521,58 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				step: 0.1,
 				isVisible: (o) => o.target === 'value',
 			},
-			{ type: 'number', id: 'fadeMs', label: 'Fade duration (ms)', default: 0, min: 0, max: 600000, step: 10 },
+			{
+				type: 'dropdown',
+				id: 'delta',
+				label: 'Delta (dB)',
+				default: '0',
+				choices: [
+					{ id: '-3', label: '-3.0 dB' },
+					{ id: '-2.5', label: '-2.5 dB' },
+					{ id: '-2', label: '-2.0 dB' },
+					{ id: '-1.5', label: '-1.5 dB' },
+					{ id: '-1', label: '-1.0 dB' },
+					{ id: '-0.5', label: '-0.5 dB' },
+					{ id: '0', label: '0.0 dB' },
+					{ id: '0.5', label: '+0.5 dB' },
+					{ id: '1', label: '+1.0 dB' },
+					{ id: '1.5', label: '+1.5 dB' },
+					{ id: '2', label: '+2.0 dB' },
+					{ id: '2.5', label: '+2.5 dB' },
+					{ id: '3', label: '+3.0 dB' },
+				],
+				isVisible: (o) => o.target === 'nudge',
+			},
+			{
+				type: 'number',
+				id: 'gain_a',
+				label: 'Gain A (dB)',
+				default: 0,
+				min: -90,
+				max: 10,
+				step: 0.1,
+				isVisible: (o) => o.target === 'pair',
+			},
+			{
+				type: 'number',
+				id: 'gain_b',
+				label: 'Gain B (dB)',
+				default: -6,
+				min: -90,
+				max: 10,
+				step: 0.1,
+				isVisible: (o) => o.target === 'pair',
+			},
+			{
+				type: 'number',
+				id: 'fadeMs',
+				label: 'Fade duration (ms)',
+				default: 0,
+				min: 0,
+				max: 600000,
+				step: 10,
+				isVisible: (o) => o.target !== 'nudge',
+			},
 			{
 				type: 'dropdown',
 				id: 'curve',
@@ -1512,20 +1582,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'linear', label: 'Linear (dB)' },
 					{ id: 'log', label: 'Logarithmic' },
 				],
-			},
-			{
-				type: 'checkbox',
-				id: 'rememberPrev',
-				label: 'Remember previous per channel',
-				default: true,
-				isVisible: () => false,
-			},
-			{
-				type: 'checkbox',
-				id: 'revertInstead',
-				label: 'Revert to previously remembered value',
-				default: false,
-				isVisible: () => false,
+				isVisible: (o) => o.target !== 'nudge',
 			},
 		],
 
@@ -1536,18 +1593,23 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				self.log?.('warn', 'No valid output channels selected')
 				return
 			}
+			const mode =
+				e.options.target === 'last' || e.options.target === 'prev'
+					? 'last'
+					: e.options.target === 'pair'
+						? 'pair'
+						: e.options.target === 'nudge'
+							? 'nudge'
+							: 'value'
 			const dur = Math.max(0, Number(e.options.fadeMs) || 0)
 			const curve = e.options.curve === 'log' ? 'log' : 'linear'
 			const btnId = e?.controlId || e?.event?.controlId || null
 
-			const target = (e.options && e.options.target === 'last') || e.options?.revertInstead === true ? 'last' : 'value'
-			const wantRemember = e.options && e.options.rememberPrev !== false
-
-			for (const ch of chs) {
-				if (target === 'last') {
+			if (mode === 'last') {
+				for (const ch of chs) {
 					const prev = typeof self._getPrevOutputGain === 'function' ? self._getPrevOutputGain(ch, btnId) : null
 					if (prev == null) {
-						self.log?.('info', `Output ch ${ch}: no previous gain stored; revert skipped`)
+						self.log?.('debug', `Output ch ${ch}: no last dB stored`)
 						continue
 					}
 					if (dur > 0 && typeof self._startOutputGainFade === 'function') {
@@ -1555,13 +1617,15 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					} else if (typeof self._setOutputGain === 'function') {
 						self._setOutputGain(ch, prev)
 					}
-					continue
 				}
+				return
+			}
 
-				const g = Number(e.options.gain)
-				if (!Number.isFinite(g)) continue
-
-				if (wantRemember) {
+			if (mode === 'nudge') {
+				const d = Number(e.options.delta)
+				const curveNudge = e.options.curve === 'log' ? 'log' : 'linear'
+				const durNudge = 0
+				for (const ch of chs) {
 					if (typeof self._subWrite === 'function') {
 						self._subWrite(`/processing/output/${ch}/gain`)
 					}
@@ -1571,61 +1635,63 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					if (typeof self._rememberPrevOutputGain === 'function') {
 						self._rememberPrevOutputGain(ch, btnId)
 					}
-				}
 
+					const cur = Number(self?.outputGain?.[ch])
+					const base = Number.isFinite(cur) ? cur : 0
+					const target = base + (Number.isFinite(d) ? d : 0)
+
+					if (durNudge > 0 && typeof self._startOutputGainFade === 'function') {
+						self._startOutputGainFade(ch, target, durNudge, curveNudge)
+					} else if (typeof self._setOutputGain === 'function') {
+						self._setOutputGain(ch, target)
+					}
+				}
+				return
+			}
+
+			if (mode === 'pair') {
+				const gA = Number(e.options.gain_a)
+				const gB = Number(e.options.gain_b)
+				for (const ch of chs) {
+					if (typeof self._subWrite === 'function') {
+						self._subWrite(`/processing/output/${ch}/gain`)
+					}
+					if (!self._outputGainToggle) self._outputGainToggle = {}
+					const lastWasA = self._outputGainToggle[ch] === 'A'
+					const targetGain = lastWasA ? gB : gA
+					self._outputGainToggle[ch] = lastWasA ? 'B' : 'A'
+
+					if (typeof self._beginPrevCaptureWindow === 'function') {
+						self._beginPrevCaptureWindow('output', ch, btnId, 300)
+					}
+					if (typeof self._rememberPrevOutputGain === 'function') {
+						self._rememberPrevOutputGain(ch, btnId)
+					}
+
+					if (dur > 0 && typeof self._startOutputGainFade === 'function') {
+						self._startOutputGainFade(ch, targetGain, dur, curve)
+					} else if (typeof self._setOutputGain === 'function') {
+						self._setOutputGain(ch, targetGain)
+					}
+				}
+				return
+			}
+
+			const g = Number(e.options.gain)
+			for (const ch of chs) {
+				if (typeof self._subWrite === 'function') {
+					self._subWrite(`/processing/output/${ch}/gain`)
+				}
+				if (typeof self._beginPrevCaptureWindow === 'function') {
+					self._beginPrevCaptureWindow('output', ch, btnId, 300)
+				}
+				if (typeof self._rememberPrevOutputGain === 'function') {
+					self._rememberPrevOutputGain(ch, btnId)
+				}
 				if (dur > 0 && typeof self._startOutputGainFade === 'function') {
 					self._startOutputGainFade(ch, g, dur, curve)
 				} else if (typeof self._setOutputGain === 'function') {
 					self._setOutputGain(ch, g)
-				}
-			}
-		},
-	}
-
-	actions['output_gain_revert'] = {
-		name: 'Output: Revert to previous gain',
-		options: [
-			{
-				type: 'multidropdown',
-				id: 'chs',
-				label: 'Output channel(s)',
-				default: [],
-				choices: outputChoicesFriendly,
-				minSelection: 0,
-			},
-			{ type: 'number', id: 'fadeMs', label: 'Fade duration (ms)', default: 0, min: 0, max: 600000, step: 10 },
-			{
-				type: 'dropdown',
-				id: 'curve',
-				label: 'Curve (used if fading)',
-				default: 'linear',
-				choices: [
-					{ id: 'linear', label: 'Linear (dB)' },
-					{ id: 'log', label: 'Logarithmic' },
-				],
-			},
-		],
-		callback: (e) => {
-			if (!self) return
-			const chs = safeGetChannels(e.options, 'chs', NUM_OUTPUTS)
-			if (chs.length === 0) {
-				self.log?.('warn', 'No valid output channels selected')
-				return
-			}
-			const dur = Math.max(0, Number(e.options.fadeMs) || 0)
-			const curve = e.options.curve === 'log' ? 'log' : 'linear'
-			const btnId = e?.controlId || e?.event?.controlId || null
-
-			for (const ch of chs) {
-				const prev = typeof self._getPrevOutputGain === 'function' ? self._getPrevOutputGain(ch, btnId) : null
-				if (prev == null) {
-					self.log?.('info', `Output ch ${ch}: no previous gain stored; revert skipped`)
-					continue
-				}
-				if (dur > 0 && typeof self._startOutputGainFade === 'function') {
-					self._startOutputGainFade(ch, prev, dur, curve)
-				} else if (typeof self._setOutputGain === 'function') {
-					self._setOutputGain(ch, prev)
 				}
 			}
 		},
@@ -1636,7 +1702,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 
 	actions['output_polarity_control'] = {
-		name: 'Output: Polarity reversal',
+		name: 'Output: Polarity',
 		options: [
 			{
 				type: 'multidropdown',
@@ -1715,7 +1781,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 
 	actions['output_delay_set'] = {
-		name: 'Output: Set delay (ms)',
+		name: 'Output: Delay',
 		options: [
 			{
 				type: 'multidropdown',
@@ -1725,8 +1791,32 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: outputChoicesFriendly,
 				minSelection: 0,
 			},
-			{ type: 'number', id: 'ms', label: 'Delay (ms)', default: 0, min: 0, max: 2000, step: 0.01 },
-			{ type: 'checkbox', id: 'relative', label: 'Add to current delay (relative)', default: false },
+			{
+				type: 'dropdown',
+				id: 'type',
+				label: 'Delay type (unit)',
+				default: 'unchanged',
+				choices: [
+					{ id: 'unchanged', label: '— Unchanged —' },
+					{ id: '0', label: 'milliseconds' },
+					{ id: '1', label: 'feet' },
+					{ id: '2', label: 'meters' },
+					{ id: '3', label: 'frames (24fps)' },
+					{ id: '4', label: 'frames (25fps)' },
+					{ id: '5', label: 'frames (30fps)' },
+					{ id: '6', label: 'samples (96kHz)' },
+				],
+			},
+			{
+				type: 'number',
+				id: 'value',
+				label: 'Delay value (uses unit above)',
+				default: 0,
+				min: 0,
+				max: 2000,
+				step: 0.01,
+				isVisible: (o) => o.type !== 'unchanged',
+			},
 		],
 		callback: (e) => {
 			if (!self) return
@@ -1735,18 +1825,39 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				self.log?.('warn', 'No valid output channels selected')
 				return
 			}
-			const wantRelative = !!e.options.relative
-			const reqMs = Number(e.options.ms)
+			const typeId = String(e.options.type || 'unchanged')
+			const valueRaw = Number(e.options.value)
 			const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 			const roundTo01 = (v) => Math.round(v / 0.01) * 0.01
 
-			for (const ch of chs) {
-				let targetMs = clamp(Number.isFinite(reqMs) ? reqMs : 0, 0, 2000)
-				if (wantRelative) {
-					const curMs = Number(self?.outputDelay?.[ch]?.ms)
-					if (Number.isFinite(curMs)) targetMs = curMs + targetMs
+			const valueToMs = (val, typeKey) => {
+				const n = Number(val)
+				if (!Number.isFinite(n)) return 0
+				const SPEED_FT_PER_SEC = 1125 // fixed for consistency with Galaxy display expectations
+				const SPEED_M_PER_SEC = 343 // approx speed of sound at room temp
+				switch (typeKey) {
+					case '1': // feet
+						return (n * 1000) / SPEED_FT_PER_SEC
+					case '2': // meters
+						return (n * 1000) / SPEED_M_PER_SEC
+					case '3': // frames 24 fps
+						return (n / 24) * 1000
+					case '4': // frames 25 fps
+						return (n / 25) * 1000
+					case '5': // frames 30 fps
+						return (n / 30) * 1000
+					case '6': // samples (96kHz)
+						return n / 96
+					case '0': // milliseconds
+					default:
+						return n
 				}
-				targetMs = roundTo01(targetMs)
+			}
+
+			for (const ch of chs) {
+				if (typeId === 'unchanged') continue
+				const msFromValue = valueToMs(valueRaw, typeId)
+				const targetMs = roundTo01(clamp(msFromValue, 0, 2000))
 
 				if (typeof self._setOutputDelayMs === 'function') {
 					self._setOutputDelayMs(ch, targetMs)
@@ -1757,6 +1868,293 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						self._applyOutputDelay(ch, samples)
 					}
 				}
+			}
+		},
+	}
+
+	// =================================
+	// ===== ATMOSPHERIC CORRECTION ====
+	// =================================
+
+	const ATMOS_GAIN_CHOICES = Array.from({ length: 10 }, (_, i) => {
+		const pct = (i + 1) * 10
+		return { id: String(pct), label: `${pct}%` }
+	})
+
+	const applyAtmosphericLocal = (ch, field, value) => {
+		if (typeof self._applyOutputAtmospheric === 'function') {
+			self._applyOutputAtmospheric(ch, field, value)
+		} else {
+			if (!self.outputAtmospheric) self.outputAtmospheric = {}
+			if (!self.outputAtmospheric[ch]) self.outputAtmospheric[ch] = {}
+			self.outputAtmospheric[ch][field] = value
+		}
+	}
+
+	const ATMOS_LINE_OPTIONS = []
+	const MAX_LINES = Math.min(16, NUM_OUTPUTS)
+	for (let i = 1; i <= MAX_LINES; i++) {
+		const visibleExpr = new Function('o', `return Number(o.count || 0) >= ${i}`)
+		ATMOS_LINE_OPTIONS.push({
+			type: 'number',
+			id: `distance_${i}`,
+			label: `Line ${i}: Distance (m)`,
+			default: 10,
+			min: 1,
+			max: 150,
+			step: 1,
+			isVisible: visibleExpr,
+		})
+		ATMOS_LINE_OPTIONS.push({
+			type: 'dropdown',
+			id: `gain_${i}`,
+			label: `Line ${i}: Gain (%)`,
+			default: '10',
+			choices: ATMOS_GAIN_CHOICES,
+			isVisible: visibleExpr,
+		})
+		if (i < MAX_LINES) {
+			ATMOS_LINE_OPTIONS.push({
+				type: 'static-text',
+				id: `line_sep_${i}`,
+				label: '',
+				value: ' ',
+				isVisible: visibleExpr,
+			})
+		}
+	}
+
+	actions['output_atmospheric_block'] = {
+		name: 'Output: Atmospheric block (multi-channel)',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'start_output',
+				label: 'Start output',
+				default: '1',
+				choices: outputChoicesFriendly,
+			},
+			{
+				type: 'dropdown',
+				id: 'count',
+				label: 'How many outputs',
+				default: String(Math.min(8, MAX_LINES)),
+				choices: Array.from({ length: MAX_LINES }, (_, i) => {
+					const n = i + 1
+					return { id: String(n), label: `${n}` }
+				}),
+			},
+			{
+				type: 'checkbox',
+				id: 'bypass',
+				label: 'Bypass ON (apply to all selected)',
+				default: false,
+			},
+			...ATMOS_LINE_OPTIONS,
+		],
+		callback: (e) => {
+			if (!self || typeof self._cmdSendLine !== 'function') return
+
+			const start = Math.max(1, Math.min(NUM_OUTPUTS, Number(e.options.start_output || 1)))
+			const requestedCount = Number(e.options.count || 1)
+			const count = Math.max(1, Math.min(MAX_LINES, Math.min(requestedCount, NUM_OUTPUTS - start + 1)))
+			const bypass = !!e.options.bypass
+
+			for (let i = 1; i <= count; i++) {
+				const ch = start + i - 1
+				if (ch > NUM_OUTPUTS) break
+
+				const distRaw = Number(e.options[`distance_${i}`])
+				const gainRaw = Number(e.options[`gain_${i}`])
+
+				const distance = Number.isFinite(distRaw) ? Math.max(1, Math.min(150, Math.round(distRaw))) : 1
+				const gain = Number.isFinite(gainRaw)
+					? Math.round(Math.max(10, Math.min(100, gainRaw)) / 10) * 10
+					: 10
+
+				self._cmdSendLine(`/processing/output/${ch}/atmospheric/bypass=${bypass ? 'true' : 'false'}`)
+				self._cmdSendLine(`/processing/output/${ch}/atmospheric/distance=${distance}`)
+				self._cmdSendLine(`/processing/output/${ch}/atmospheric/gain=${gain}`)
+
+				applyAtmosphericLocal(ch, 'bypass', bypass)
+				applyAtmosphericLocal(ch, 'distance', distance)
+				applyAtmosphericLocal(ch, 'gain', gain)
+			}
+		},
+	}
+
+	actions['output_atmospheric_single'] = {
+		name: 'Output: Atmospheric (single output)',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'ch',
+				label: 'Output',
+				default: '1',
+				choices: outputChoicesFriendly,
+			},
+			{
+				type: 'checkbox',
+				id: 'bypass',
+				label: 'Bypass ON',
+				default: false,
+			},
+			{
+				type: 'number',
+				id: 'distance',
+				label: 'Distance (m)',
+				default: 10,
+				min: 1,
+				max: 150,
+				step: 1,
+			},
+			{
+				type: 'dropdown',
+				id: 'gain',
+				label: 'Gain (%)',
+				default: '10',
+				choices: ATMOS_GAIN_CHOICES,
+			},
+		],
+		callback: (e) => {
+			if (!self || typeof self._cmdSendLine !== 'function') return
+			const ch = Number(e.options.ch || 1)
+			if (!Number.isFinite(ch) || ch < 1 || ch > NUM_OUTPUTS) {
+				self.log?.('warn', 'Invalid output channel selected')
+				return
+			}
+			const bypass = !!e.options.bypass
+			const distRaw = Number(e.options.distance)
+			const gainRaw = Number(e.options.gain)
+			const distance = Number.isFinite(distRaw) ? Math.max(1, Math.min(150, Math.round(distRaw))) : 1
+			const gain = Number.isFinite(gainRaw) ? Math.round(Math.max(10, Math.min(100, gainRaw)) / 10) * 10 : 10
+
+			self._cmdSendLine(`/processing/output/${ch}/atmospheric/bypass=${bypass ? 'true' : 'false'}`)
+			self._cmdSendLine(`/processing/output/${ch}/atmospheric/distance=${distance}`)
+			self._cmdSendLine(`/processing/output/${ch}/atmospheric/gain=${gain}`)
+
+			applyAtmosphericLocal(ch, 'bypass', bypass)
+			applyAtmosphericLocal(ch, 'distance', distance)
+			applyAtmosphericLocal(ch, 'gain', gain)
+		},
+	}
+
+	// ================================
+	// ===== HF ATTENUATION CURVE =====
+	// ================================
+
+	actions['output_hf_attenuation'] = {
+		name: 'Output: HF attenuation',
+		description:
+			'Apply a log-shaped HF attenuation curve to U-Shaping Band 5 across consecutive outputs (+2.67 to 0 dB, then 0 to -5.33 dB). Uses the first half of the selected array for the positive portion and the second half for the negative portion.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'start_output',
+				label: 'Start output',
+				default: '1',
+				choices: outputChoicesFriendly,
+			},
+			{
+				type: 'number',
+				id: 'total',
+				label: 'Number of loudspeakers',
+				default: NUM_OUTPUTS,
+				min: 1,
+				max: NUM_OUTPUTS,
+				step: 1,
+			},
+			{
+				type: 'number',
+				id: 'ratio',
+				label: 'HF shading span (dB)',
+				tooltip: 'Total dB span to split 1/3 positive and 2/3 negative across the array (default 8 dB).',
+				default: 8,
+				min: 0.1,
+				max: 24,
+				step: 0.1,
+			},
+		],
+		callback: (e) => {
+			if (!self || typeof self._cmdSendLine !== 'function') return
+
+			const start = Math.max(1, Math.min(NUM_OUTPUTS, Math.round(Number(e.options.start_output) || 1)))
+
+			const totalRaw = Number(e.options.total)
+			let total = Number.isFinite(totalRaw) ? Math.round(totalRaw) : NUM_OUTPUTS
+			total = Math.max(1, Math.min(total, NUM_OUTPUTS - start + 1))
+
+			// Use half the selected array length as the positive-curve span (e.g., 1-8 on a 16-box array)
+			const span = Math.max(1, Math.ceil(total / 2))
+			const logBase = Math.log(span)
+			if (!Number.isFinite(logBase) || logBase <= 0) {
+				self.log?.('warn', 'HF attenuation: invalid span (must be > 1)')
+				return
+			}
+
+			const ratioRaw = Number(e.options.ratio)
+			const totalSwing = Math.max(0.1, Math.min(24, Number.isFinite(ratioRaw) ? ratioRaw : 8))
+			const posMax = totalSwing / 3 // 1/3 positive
+			const negMax = (totalSwing * 2) / 3 // 2/3 negative
+
+			const band4Frequency = 8000
+			const band4Slope = 1 // 6 dB/oct
+
+			const roundTenth = (v) => {
+				const r = Math.round(v * 10) / 10
+				return Object.is(r, -0) ? 0 : r
+			}
+
+			const assignments = []
+
+			for (let i = 0; i < total; i++) {
+				const boxIndex = i + 1
+				const ch = start + i
+				if (ch > NUM_OUTPUTS) break
+
+				let rawDb
+				if (boxIndex <= span) {
+					const t = Math.log(boxIndex) / logBase
+					rawDb = posMax * (1 - t)
+				} else {
+					const j = Math.max(1, 2 * span - boxIndex + 1)
+					const s = (logBase - Math.log(j)) / logBase
+					rawDb = -negMax * s
+				}
+
+				const db = roundTenth(rawDb)
+				// Update local state for U-Shaping Bands 4 (freq/slope) and 5 (HF gain)
+				if (!self.outputUShaping) self.outputUShaping = {}
+				if (!self.outputUShaping[ch]) self.outputUShaping[ch] = {}
+				if (!self.outputUShaping[ch][4]) self.outputUShaping[ch][4] = {}
+				if (!self.outputUShaping[ch][5]) self.outputUShaping[ch][5] = {}
+
+				self.outputUShaping[ch][4].frequency = band4Frequency
+				self.outputUShaping[ch][4].slope = band4Slope
+				self.outputUShaping[ch][5].gain = db
+
+				// Send to device
+				self._cmdSendLine(`/processing/output/${ch}/ushaping/4/frequency=${band4Frequency}`)
+				self._cmdSendLine(`/processing/output/${ch}/ushaping/4/slope=${band4Slope}`)
+				self._cmdSendLine(`/processing/output/${ch}/ushaping/5/gain=${db}`)
+
+				// Update variable value if available
+				if (typeof self.setVariableValues === 'function') {
+					self.setVariableValues({
+						[`output_${ch}_ushaping_band4_frequency`]: Math.round(band4Frequency).toString(),
+						[`output_${ch}_ushaping_band4_slope`]: Math.round(band4Slope).toString(),
+						[`output_${ch}_ushaping_band5_gain`]: db.toFixed(1),
+					})
+				}
+
+				assignments.push(`${ch}:${db.toFixed(1)} dB`)
+			}
+
+			if (assignments.length > 0) {
+				self.log?.(
+					'info',
+					`HF attenuation from output ${start} (${total} speakers, span ${span}, total ${totalSwing.toFixed(1)} dB, +1/3:${posMax.toFixed(2)} / -2/3:${negMax.toFixed(2)}): ${assignments.join(', ')}`,
+				)
 			}
 		},
 	}
@@ -2599,6 +2997,16 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: ALLPASS_BAND_CHOICES,
 			},
 			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'value',
+				choices: [
+					{ id: 'value', label: 'Set to value' },
+					{ id: 'nudge', label: 'Nudge (delta)' },
+				],
+			},
+			{
 				type: 'number',
 				id: 'frequency',
 				label: 'Frequency (Hz)',
@@ -2606,6 +3014,17 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 10,
 				max: 20000,
 				step: 1,
+				isVisible: (o) => o.mode === 'value',
+			},
+			{
+				type: 'number',
+				id: 'frequency_delta',
+				label: 'Delta (Hz)',
+				default: 10,
+				min: -20000,
+				max: 20000,
+				step: 1,
+				isVisible: (o) => o.mode === 'nudge',
 			},
 		],
 		callback: (e) => {
@@ -2616,19 +3035,32 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				return
 			}
 			const band = Math.max(1, Math.min(3, Number(e.options?.band ?? 1)))
-			const hz = Number(e.options?.frequency)
-			if (!Number.isFinite(hz)) {
-				self.log?.('warn', 'Invalid all-pass frequency')
-				return
-			}
-			const clamped = Math.max(10, Math.min(20000, hz))
+			const mode = e.options.mode === 'nudge' ? 'nudge' : 'value'
+			const clamp = (v) => Math.max(10, Math.min(20000, v))
+
 			for (const ch of chs) {
+				let targetHz
+				if (mode === 'nudge') {
+					const fine = Number(e.options.frequency_delta)
+					const delta = Number.isFinite(fine) ? fine : 0
+					const cur = Number(self?.outputAllpass?.[ch]?.[band]?.frequency)
+					const base = Number.isFinite(cur) ? cur : Number(e.options.frequency) || 100
+					targetHz = clamp(base + (Number.isFinite(delta) ? delta : 0))
+				} else {
+					const hz = Number(e.options?.frequency)
+					if (!Number.isFinite(hz)) {
+						self.log?.('warn', 'Invalid all-pass frequency')
+						continue
+					}
+					targetHz = clamp(hz)
+				}
+
 				if (typeof self._setOutputAllpassFrequency === 'function') {
-					self._setOutputAllpassFrequency(ch, band, clamped)
+					self._setOutputAllpassFrequency(ch, band, targetHz)
 				} else {
 					if (typeof self._cmdSendLine === 'function')
-						self._cmdSendLine(`/processing/output/${ch}/allpass/${band}/frequency=${clamped}`)
-					if (typeof self._applyOutputAllpass === 'function') self._applyOutputAllpass(ch, band, 'frequency', clamped)
+						self._cmdSendLine(`/processing/output/${ch}/allpass/${band}/frequency=${targetHz}`)
+					if (typeof self._applyOutputAllpass === 'function') self._applyOutputAllpass(ch, band, 'frequency', targetHz)
 				}
 			}
 		},
@@ -2653,13 +3085,44 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: ALLPASS_BAND_CHOICES,
 			},
 			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'value',
+				choices: [
+					{ id: 'value', label: 'Set to value' },
+					{ id: 'nudge', label: 'Nudge (delta)' },
+				],
+			},
+			{
 				type: 'number',
 				id: 'q',
 				label: 'Q value',
 				default: 1,
 				min: 0.5,
-				max: 10,
+				max: 12,
 				step: 0.01,
+				isVisible: (o) => o.mode === 'value',
+			},
+			{
+				type: 'number',
+				id: 'q_delta',
+				label: 'Delta (Q) - fine',
+				default: 0.1,
+				min: -12,
+				max: 12,
+				step: 0.01,
+				isVisible: (o) => o.mode === 'nudge',
+			},
+			{
+				type: 'number',
+				id: 'q_delta_coarse',
+				label: 'Delta (Q) - coarse',
+				default: 0.5,
+				min: -12,
+				max: 12,
+				step: 0.01,
+				isVisible: (o) => o.mode === 'nudge',
 			},
 		],
 		callback: (e) => {
@@ -2670,20 +3133,72 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				return
 			}
 			const band = Math.max(1, Math.min(3, Number(e.options?.band ?? 1)))
-			const qRaw = Number(e.options?.q)
-			if (!Number.isFinite(qRaw)) {
-				self.log?.('warn', 'Invalid all-pass Q value')
-				return
-			}
-			const clamped = Math.max(0.5, Math.min(10, qRaw))
+			const mode = e.options.mode === 'nudge' ? 'nudge' : 'value'
+			const clamp = (v) => Math.max(0.5, Math.min(12, v))
+
 			for (const ch of chs) {
+				let targetQ
+				if (mode === 'nudge') {
+					const fine = Number(e.options.q_delta)
+					const coarse = Number(e.options.q_delta_coarse)
+					const key = buildRotaryKey(e)
+					const isCoarse = key && self._rotaryPressState?.[key]
+					const delta = isCoarse && Number.isFinite(coarse) ? coarse : Number.isFinite(fine) ? fine : 0
+					const cur = Number(self?.outputAllpass?.[ch]?.[band]?.q)
+					const base = Number.isFinite(cur) ? cur : Number(e.options.q) || 1
+					targetQ = clamp(base + (Number.isFinite(delta) ? delta : 0))
+				} else {
+					const qRaw = Number(e.options?.q)
+					if (!Number.isFinite(qRaw)) {
+						self.log?.('warn', 'Invalid all-pass Q value')
+						continue
+					}
+					targetQ = clamp(qRaw)
+				}
+
 				if (typeof self._setOutputAllpassQ === 'function') {
-					self._setOutputAllpassQ(ch, band, clamped)
+					self._setOutputAllpassQ(ch, band, targetQ)
 				} else {
 					if (typeof self._cmdSendLine === 'function')
-						self._cmdSendLine(`/processing/output/${ch}/allpass/${band}/q=${clamped}`)
-					if (typeof self._applyOutputAllpass === 'function') self._applyOutputAllpass(ch, band, 'q', clamped)
+						self._cmdSendLine(`/processing/output/${ch}/allpass/${band}/q=${targetQ}`)
+					if (typeof self._applyOutputAllpass === 'function') self._applyOutputAllpass(ch, band, 'q', targetQ)
 				}
+			}
+		},
+	}
+
+	actions['output_allpass_q_coarse_mode'] = {
+		name: 'Output: All-pass Q Coarse Mode',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'All-pass coarse mode: no controlId/key available')
+				return
+			}
+			if (!self._rotaryPressState) self._rotaryPressState = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressState[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressState[key]
+			} else {
+				self._rotaryPressState[key] = !self._rotaryPressState[key]
+				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
 			}
 		},
 	}
@@ -2709,14 +3224,13 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'Delay per step',
 				default: '1000',
 				choices: [
-					{ id: '250', label: '0.25 s' },
 					{ id: '500', label: '0.5 s' },
 					{ id: '1000', label: '1 s' },
 					{ id: '2000', label: '2 s' },
 					{ id: '3000', label: '3 s' },
 					{ id: '5000', label: '5 s' },
 					{ id: '10000', label: '10 s' },
-					{ id: '10000', label: '15 s' },
+					{ id: '15000', label: '15 s' },
 
 				],
 			},

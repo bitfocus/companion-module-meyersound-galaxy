@@ -197,7 +197,7 @@ function inputDelayPreset(self, ch) {
 		name: `Input ${ch} Delay`,
 		style: {
 			text: `In ${ch}\n$(${inst}:input_${ch}_name)\nDelay\n$(${inst}:input_${ch}_delay_ms) ms`,
-			size: '14',
+			size: '10',
 			color: 0xffffff,
 			bgcolor: 0x1a5490,
 			alignment: 'center:middle',
@@ -207,13 +207,153 @@ function inputDelayPreset(self, ch) {
 				down: [
 					{
 						actionId: 'input_delay_set',
-						options: { chs: [String(ch)], ms: '0.00' },
+						options: { chs: [String(ch)], type: '0', value: 0 },
 					},
 				],
 				up: [],
 			},
 		],
 		feedbacks: [],
+	}
+}
+
+function inputGainSetPreset(self, ch) {
+	const inst = self.label || 'Galaxy'
+
+	return {
+		type: 'button',
+		category: 'Inputs/Gain',
+		name: `Input ${ch} Gain`,
+		style: {
+			text: `In ${ch} $(${inst}:input_${ch}_name)\n$(${inst}:input_${ch}_gain_db) dB`,
+			size: '14',
+			color: 0xffffff,
+			bgcolor: 0x1a1a1a,
+			alignment: 'center:middle',
+		},
+		steps: [
+			{
+				down: [
+					{
+						actionId: 'input_gain_set',
+						options: {
+							chs: [String(ch)],
+							target: 'value',
+							gain: 0,
+							fadeMs: 0,
+							curve: 'linear',
+						},
+					},
+				],
+				up: [],
+			},
+		],
+		feedbacks: [
+			{
+				feedbackId: 'input_gain_level',
+				options: { ch: String(ch) },
+			},
+		],
+	}
+}
+
+function inputGainNudgePreset(self, ch) {
+	const inst = self.label || 'Galaxy'
+
+	return {
+		type: 'button',
+		category: 'Inputs/Gain Nudge',
+		name: `Input ${ch} Gain Nudge`,
+		style: {
+			text: `In ${ch} $(${inst}:input_${ch}_name)\n$(${inst}:input_${ch}_gain_db) dB\n▲▼`,
+			size: '12',
+			color: 0xffffff,
+			bgcolor: 0x222244,
+			alignment: 'center:middle',
+		},
+		options: { rotaryActions: true, stepAutoProgress: false },
+		steps: [
+			{
+				down: [],
+				up: [],
+				rotate_left: [
+					{
+						actionId: 'input_gain_set',
+						options: {
+							chs: [String(ch)],
+							target: 'nudge',
+							delta: '-0.5',
+						},
+					},
+				],
+				rotate_right: [
+					{
+						actionId: 'input_gain_set',
+						options: {
+							chs: [String(ch)],
+							target: 'nudge',
+							delta: '0.5',
+						},
+					},
+				],
+			},
+		],
+		feedbacks: [
+			{
+				feedbackId: 'input_gain_level',
+				options: { ch: String(ch) },
+			},
+		],
+	}
+}
+
+function outputGainNudgePreset(self, ch) {
+	const inst = self.label || 'Galaxy'
+
+	return {
+		type: 'button',
+		category: 'Outputs/Gain Nudge',
+		name: `Output ${ch} Gain Nudge`,
+		style: {
+			text: `Out ${ch} $(${inst}:output_${ch}_name)\n$(${inst}:output_${ch}_gain_db) dB\n▲▼`,
+			size: '12',
+			color: 0xffffff,
+			bgcolor: 0x442222,
+			alignment: 'center:middle',
+		},
+		options: { rotaryActions: true, stepAutoProgress: false },
+		steps: [
+			{
+				down: [],
+				up: [],
+				rotate_left: [
+					{
+						actionId: 'output_gain_set',
+						options: {
+							chs: [String(ch)],
+							target: 'nudge',
+							delta: '-0.5',
+						},
+					},
+				],
+				rotate_right: [
+					{
+						actionId: 'output_gain_set',
+						options: {
+							chs: [String(ch)],
+							target: 'nudge',
+							delta: '0.5',
+						},
+					},
+				],
+			},
+		],
+		feedbacks: [
+			{
+				feedbackId: 'output_gain_level',
+				options: { ch: String(ch) },
+			},
+		],
 	}
 }
 
@@ -265,7 +405,7 @@ function outputDelayPreset(self, ch) {
 				down: [
 					{
 						actionId: 'output_delay_set',
-						options: { chs: [String(ch)], ms: '0.00' },
+						options: { chs: [String(ch)], type: '0', value: 0 },
 					},
 				],
 				up: [],
@@ -485,6 +625,72 @@ function outputAllpassPreset(self, ch, band) {
 				feedbackId: 'output_allpass_active',
 				options: { ch: String(ch), band: String(band) },
 				style: { color: 0xffffff, bgcolor: 0x4f4b23 },
+			},
+		],
+	}
+}
+
+function outputAllpassQNudgePreset(self, ch, band, deltaFine = 0.1, deltaCoarse = 0.5) {
+	const inst = self.label || 'Galaxy'
+	const bandLabel = `All-pass ${band}`
+	const qVar = `output_${ch}_allpass_${band}_q`
+	return {
+		type: 'button',
+		category: 'Outputs/All-pass Q (Rotary)',
+		name: `${bandLabel} Q: Output ${ch}`,
+		style: {
+			text: `Out ${ch}\n$(${inst}:output_${ch}_name)\n${bandLabel} Q\n$(${inst}:${qVar})`,
+			size: '10',
+			color: 0xffffff,
+			bgcolor: 0x1a1a1a,
+			alignment: 'center:middle',
+		},
+		options: { rotaryActions: true, stepAutoProgress: false },
+		steps: [
+			{
+				down: [
+					{
+						actionId: 'output_allpass_q_coarse_mode',
+						options: { mode: 'press' },
+					},
+				],
+				up: [
+					{
+						actionId: 'output_allpass_q_coarse_mode',
+						options: { mode: 'release' },
+					},
+				],
+				rotate_left: [
+					{
+						actionId: 'output_allpass_q',
+						options: {
+							chs: [String(ch)],
+							band: String(band),
+							mode: 'nudge',
+							q_delta: -Math.abs(deltaFine),
+							q_delta_coarse: -Math.abs(deltaCoarse),
+						},
+					},
+				],
+				rotate_right: [
+					{
+						actionId: 'output_allpass_q',
+						options: {
+							chs: [String(ch)],
+							band: String(band),
+							mode: 'nudge',
+							q_delta: Math.abs(deltaFine),
+							q_delta_coarse: Math.abs(deltaCoarse),
+						},
+					},
+				],
+			},
+		],
+		feedbacks: [
+			{
+				feedbackId: 'output_allpass_active',
+				options: { ch: String(ch), band: String(band) },
+				style: { color: 0x000000, bgcolor: 0xffc107 },
 			},
 		],
 	}
@@ -2056,12 +2262,10 @@ function eqOutputBandBypassKnobPreset(self) {
 
 /* ===== Matrix Presets ===== */
 
-function matrixGainSetPreset(self, input, output) {
+function matrixGainSetPreset(self, input, output, gainValue = 0, mode = 'set') {
 	const inst = self.label || 'Galaxy'
-	const inputName = self?.inputName?.[input]
-	const outputName = self?.outputName?.[output]
-	const inputLabel = inputName ? `In ${input} (${inputName})` : `In ${input}`
-	const outputLabel = outputName ? `Out ${output} (${outputName})` : `Out ${output}`
+	const inputLabel = `In ${input} ($(${inst}:input_${input}_name))`
+	const outputLabel = `Out ${output} ($(${inst}:output_${output}_name))`
 
 	return {
 		type: 'button',
@@ -2078,11 +2282,12 @@ function matrixGainSetPreset(self, input, output) {
 			{
 				down: [
 					{
-						actionId: 'matrix_gain_set',
+						actionId: 'matrix_gain',
 						options: {
 							matrix_inputs: [String(input)],
 							matrix_outputs: [String(output)],
-							gain: 0,
+							mode: mode,
+							gain: gainValue,
 							fadeMs: 0,
 							curve: 'linear',
 						},
@@ -2096,16 +2301,19 @@ function matrixGainSetPreset(self, input, output) {
 				feedbackId: 'matrix_gain_color',
 				options: { matrix_input: String(input), matrix_output: String(output) },
 			},
+			{
+				feedbackId: 'matrix_delay_bypassed',
+				options: { matrix_input: String(input), matrix_output: String(output) },
+				style: { bgcolor: 0xff9800 },
+			},
 		],
 	}
 }
 
 function matrixGainNudgePreset(self, input, output) {
 	const inst = self.label || 'Galaxy'
-	const inputName = self?.inputName?.[input]
-	const outputName = self?.outputName?.[output]
-	const inputLabel = inputName ? `In ${input}` : `In ${input}`
-	const outputLabel = outputName ? `Out ${output}` : `Out ${output}`
+	const inputLabel = `In ${input} ($(${inst}:input_${input}_name))`
+	const outputLabel = `Out ${output} ($(${inst}:output_${output}_name))`
 
 	return {
 		type: 'button',
@@ -2124,36 +2332,27 @@ function matrixGainNudgePreset(self, input, output) {
 		},
 		steps: [
 			{
-				down: [
-					{
-						actionId: 'matrix_gain_set',
-						options: {
-							matrix_inputs: [String(input)],
-							matrix_outputs: [String(output)],
-							gain: 0,
-							fadeMs: 0,
-							curve: 'linear',
-						},
-					},
-				],
+				down: [],
 				up: [],
 				rotate_left: [
 					{
-						actionId: 'matrix_gain_nudge',
+						actionId: 'matrix_gain',
 						options: {
 							matrix_inputs: [String(input)],
 							matrix_outputs: [String(output)],
-							delta: -1,
+							mode: 'nudge',
+							delta: '-0.5',
 						},
 					},
 				],
 				rotate_right: [
 					{
-						actionId: 'matrix_gain_nudge',
+						actionId: 'matrix_gain',
 						options: {
 							matrix_inputs: [String(input)],
 							matrix_outputs: [String(output)],
-							delta: 1,
+							mode: 'nudge',
+							delta: '0.5',
 						},
 					},
 				],
@@ -2164,16 +2363,19 @@ function matrixGainNudgePreset(self, input, output) {
 				feedbackId: 'matrix_gain_color',
 				options: { matrix_input: String(input), matrix_output: String(output) },
 			},
+			{
+				feedbackId: 'matrix_delay_bypassed',
+				options: { matrix_input: String(input), matrix_output: String(output) },
+				style: { bgcolor: 0xff9800 },
+			},
 		],
 	}
 }
 
 function matrixDelaySetPreset(self, input, output) {
 	const inst = self.label || 'Galaxy'
-	const inputName = self?.inputName?.[input]
-	const outputName = self?.outputName?.[output]
-	const inputLabel = inputName ? `In ${input}` : `In ${input}`
-	const outputLabel = outputName ? `Out ${output}` : `Out ${output}`
+	const inputLabel = `In ${input} ($(${inst}:input_${input}_name))`
+	const outputLabel = `Out ${output} ($(${inst}:output_${output}_name))`
 
 	return {
 		type: 'button',
@@ -2190,12 +2392,13 @@ function matrixDelaySetPreset(self, input, output) {
 			{
 				down: [
 					{
-						actionId: 'matrix_delay_set',
+						actionId: 'matrix_delay_full',
 						options: {
 							matrix_inputs: [String(input)],
 							matrix_outputs: [String(output)],
-							ms: 0,
-							relative: false,
+							type: '0',
+							value: 0,
+							delay_status: 'unchanged',
 						},
 					},
 				],
@@ -2214,10 +2417,8 @@ function matrixDelaySetPreset(self, input, output) {
 
 function matrixDelayBypassPreset(self, input, output) {
 	const inst = self.label || 'Galaxy'
-	const inputName = self?.inputName?.[input]
-	const outputName = self?.outputName?.[output]
-	const inputLabel = inputName ? `In ${input}` : `In ${input}`
-	const outputLabel = outputName ? `Out ${output}` : `Out ${output}`
+	const inputLabel = `In ${input} ($(${inst}:input_${input}_name))`
+	const outputLabel = `Out ${output} ($(${inst}:output_${output}_name))`
 
 	return {
 		type: 'button',
@@ -2234,11 +2435,13 @@ function matrixDelayBypassPreset(self, input, output) {
 			{
 				down: [
 					{
-						actionId: 'matrix_delay_bypass',
+						actionId: 'matrix_delay_full',
 						options: {
 							matrix_inputs: [String(input)],
 							matrix_outputs: [String(output)],
-							operation: 'toggle',
+							type: 'unchanged',
+							value: 0,
+							delay_status: 'toggle',
 						},
 					},
 				],
@@ -2507,6 +2710,12 @@ module.exports = function UpdatePresets(self, NUM_INPUTS, NUM_OUTPUTS) {
 	addSection('Inputs', 'Link Group Assignment', 'Assign each input channel to a link group or unassign.')
 	for (let ch = 1; ch <= NUM_INPUTS; ch++) addInput(inputLinkGroupAssignPreset(self, ch))
 
+	addSection('Inputs', 'Gain', 'Set gain for each input channel.')
+	for (let ch = 1; ch <= maxIn; ch++) addInput(inputGainSetPreset(self, ch))
+
+	addSection('Inputs', 'Gain Nudge', 'Use rotary encoders to nudge input gain up/down.')
+	for (let ch = 1; ch <= maxIn; ch++) addInput(inputGainNudgePreset(self, ch))
+
 	addSection('Inputs', 'Delay', 'Set delay for each input channel with variable display.')
 	for (let ch = 1; ch <= NUM_INPUTS; ch++) addInput(inputDelayPreset(self, ch))
 
@@ -2539,6 +2748,9 @@ module.exports = function UpdatePresets(self, NUM_INPUTS, NUM_OUTPUTS) {
 	addSection('Outputs', 'Link Group Assignment', 'Assign each output channel to a link group or unassign.')
 	for (let ch = 1; ch <= NUM_OUTPUTS; ch++) addOutput(outputLinkGroupAssignPreset(self, ch))
 
+	addSection('Outputs', 'Gain Nudge', 'Use rotary encoders to nudge output gain up/down.')
+	for (let ch = 1; ch <= maxOut; ch++) addOutput(outputGainNudgePreset(self, ch))
+
 	addSection('Outputs', 'Delay', 'Set delay for each output channel with variable display.')
 	for (let ch = 1; ch <= NUM_OUTPUTS; ch++) addOutput(outputDelayPreset(self, ch))
 
@@ -2554,6 +2766,11 @@ module.exports = function UpdatePresets(self, NUM_INPUTS, NUM_OUTPUTS) {
 	addSection('Outputs', 'All-pass Filters', 'Toggle the all-pass bands for each output.')
 	for (let ch = 1; ch <= maxOut; ch++) {
 		for (let band = 1; band <= 3; band++) addOutput(outputAllpassPreset(self, ch, band))
+	}
+
+	addSection('Outputs', 'All-pass Q (Rotary)', 'Fine/coarse rotary control for all-pass Q (press = coarse, release = fine).')
+	for (let ch = 1; ch <= maxOut; ch++) {
+		for (let band = 1; band <= 3; band++) addOutput(outputAllpassQNudgePreset(self, ch, band))
 	}
 
 	addSection('Outputs', 'U-Shaping', 'Choose the target output/band and adjust U-Shaping parameters.')
@@ -2609,48 +2826,31 @@ module.exports = function UpdatePresets(self, NUM_INPUTS, NUM_OUTPUTS) {
 	}
 
 	// ----- Matrix -----
-	addSection('Matrix', 'Matrix Routing', 'Set gain for individual crosspoints or entire rows/columns.')
-	pushPreset(matrixClearAllPreset(self, NUM_INPUTS, NUM_OUTPUTS), 'Matrix')
-
-	// Matrix row presets (one input to all outputs)
-	for (let i = 1; i <= Math.min(8, NUM_INPUTS); i++) {
-		pushPreset(matrixRowPreset(self, i, NUM_OUTPUTS), 'Matrix')
-	}
-
-	// Matrix column presets (all inputs to one output)
-	for (let o = 1; o <= Math.min(8, NUM_OUTPUTS); o++) {
-		pushPreset(matrixColumnPreset(self, o, NUM_INPUTS), 'Matrix')
-	}
-
-	// Individual crosspoint presets (limited to 8x8 grid for sanity)
-	addSection('Matrix', 'Matrix Crosspoints', 'Individual crosspoint gain controls (8x8 grid).')
-	for (let i = 1; i <= Math.min(8, NUM_INPUTS); i++) {
-		for (let o = 1; o <= Math.min(8, NUM_OUTPUTS); o++) {
-			pushPreset(matrixGainSetPreset(self, i, o), 'Matrix')
+	const maxOutMatrix = Math.min(16, NUM_OUTPUTS)
+	if (NUM_INPUTS >= 1 && maxOutMatrix >= 1) {
+		addSection('Matrix', 'Matrix Gain (Input 1)', 'Crosspoint gain set for Input 1 to Outputs 1–16.')
+		for (let o = 1; o <= maxOutMatrix; o++) {
+			pushPreset(matrixGainSetPreset(self, 1, o), 'Matrix')
 		}
-	}
 
-	// Rotary/nudge presets for crosspoints
-	addSection('Matrix', 'Matrix Crosspoints (Rotary)', 'Crosspoint gain with rotary encoder support.')
-	for (let i = 1; i <= Math.min(4, NUM_INPUTS); i++) {
-		for (let o = 1; o <= Math.min(4, NUM_OUTPUTS); o++) {
-			pushPreset(matrixGainNudgePreset(self, i, o), 'Matrix')
+		addSection('Matrix', 'Matrix Gain Nudge (Input 1)', 'Crosspoint gain nudge for Input 1 to Outputs 1–16.')
+		for (let o = 1; o <= maxOutMatrix; o++) {
+			pushPreset(matrixGainNudgePreset(self, 1, o), 'Matrix')
 		}
-	}
 
-	// Matrix delay presets (limited to 4x4 grid)
-	addSection('Matrix', 'Matrix Delay', 'Individual crosspoint delay controls (4x4 grid).')
-	for (let i = 1; i <= Math.min(4, NUM_INPUTS); i++) {
-		for (let o = 1; o <= Math.min(4, NUM_OUTPUTS); o++) {
-			pushPreset(matrixDelaySetPreset(self, i, o), 'Matrix')
+		addSection('Matrix', 'Matrix Gain -6dB (Input 1)', 'Quick set to -6 dB for Input 1 to Outputs 1–16.')
+		for (let o = 1; o <= maxOutMatrix; o++) {
+			pushPreset(matrixGainSetPreset(self, 1, o, -6, 'minus6'), 'Matrix')
 		}
-	}
 
-	// Matrix delay bypass presets (limited to 4x4 grid)
-	addSection('Matrix', 'Matrix Delay Bypass', 'Individual crosspoint delay bypass controls (4x4 grid).')
-	for (let i = 1; i <= Math.min(4, NUM_INPUTS); i++) {
-		for (let o = 1; o <= Math.min(4, NUM_OUTPUTS); o++) {
-			pushPreset(matrixDelayBypassPreset(self, i, o), 'Matrix')
+		addSection('Matrix', 'Matrix Delay (Input 1)', 'Delay controls for Input 1 to Outputs 1–16.')
+		for (let o = 1; o <= maxOutMatrix; o++) {
+			pushPreset(matrixDelaySetPreset(self, 1, o), 'Matrix')
+		}
+
+		addSection('Matrix', 'Matrix Delay Bypass (Input 1)', 'Delay bypass toggles for Input 1 to Outputs 1–16.')
+		for (let o = 1; o <= maxOutMatrix; o++) {
+			pushPreset(matrixDelayBypassPreset(self, 1, o), 'Matrix')
 		}
 	}
 

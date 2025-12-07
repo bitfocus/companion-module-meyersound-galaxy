@@ -153,11 +153,34 @@ module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUT
 		vars.push({ variableId: `output_${ch}_meter_dbfs`, name: `Output ${ch} meter (dBFS)` })
 		vars.push({ variableId: `output_${ch}_polarity`, name: `Output ${ch} polarity` })
 		vars.push({ variableId: `output_${ch}_link_group`, name: `Output ${ch} link group` })
+		vars.push({ variableId: `output_${ch}_atmospheric_bypass`, name: `Output ${ch} atmospheric bypass` })
+		vars.push({
+			variableId: `output_${ch}_atmospheric_distance_m`,
+			name: `Output ${ch} atmospheric distance (m)`,
+		})
+		vars.push({
+			variableId: `output_${ch}_atmospheric_gain_percent`,
+			name: `Output ${ch} atmospheric gain (%)`,
+		})
 
 		// Backfill output link group assignment if available
 		if (self?.outputLinkGroupAssign?.[ch] !== undefined) {
 			const group = self.outputLinkGroupAssign[ch]
 			vals[`output_${ch}_link_group`] = group === 0 ? 'Unassigned' : `Group ${group}`
+		}
+		if (self?.outputAtmospheric?.[ch]) {
+			const atm = self.outputAtmospheric[ch]
+			if (typeof atm.bypass === 'boolean') {
+				vals[`output_${ch}_atmospheric_bypass`] = atm.bypass ? 'ON' : 'OFF'
+			}
+			if (typeof atm.distance === 'number') {
+				const d = atm.distance
+				vals[`output_${ch}_atmospheric_distance_m`] = d % 1 === 0 ? String(Math.round(d)) : d.toFixed(2)
+			}
+			if (typeof atm.gain === 'number') {
+				const g = atm.gain
+				vals[`output_${ch}_atmospheric_gain_percent`] = g % 1 === 0 ? String(Math.round(g)) : g.toFixed(1)
+			}
 		}
 		vars.push({ variableId: `output_${ch}_highpass`, name: `Output ${ch} high-pass` })
 		vars.push({ variableId: `output_${ch}_highpass_frequency`, name: `Output ${ch} high-pass frequency (Hz)` })
@@ -331,7 +354,7 @@ module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUT
 				}
 				if (typeof ap.q === 'number') {
 					const qVal = ap.q
-					vals[`output_${ch}_allpass_${band}_q`] = qVal % 1 === 0 ? String(Math.round(qVal)) : qVal.toFixed(2)
+					vals[`output_${ch}_allpass_${band}_q`] = qVal.toFixed(2)
 				}
 			} else {
 				vals[`output_${ch}_allpass_${band}`] = 'OFF'

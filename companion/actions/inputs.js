@@ -14,6 +14,11 @@ const { safeGetChannels } = require('../actions-helpers')
 function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	const inputChoicesNum = rangeChoices(NUM_INPUTS, 'Input ')
 	const inputChoicesFriendly = buildInputChoices(self, NUM_INPUTS)
+	const buildRotaryKey = (ev) => {
+		const surf = ev?.surfaceId || ev?.event?.surfaceId || 'default'
+		const ctrl = ev?.controlId || ev?.event?.controlId || null
+		return ctrl ? `${surf}::${ctrl}` : null
+	}
 
 	// =========================
 	// ======= MUTES ===========
@@ -111,6 +116,17 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 			if (shouldApplySolo) {
 				// Apply solo: unmute selected, mute others
+				// Preserve original mute states from before the first solo, and keep them when switching solos
+				const prevMute =
+					(currentSoloState && currentSoloState.prevMute) ||
+					(() => {
+						const snap = {}
+						for (let ch = 1; ch <= NUM_INPUTS; ch++) {
+							snap[ch] = !!self?.inMute?.[ch]
+						}
+						return snap
+					})()
+
 				for (let ch = 1; ch <= NUM_INPUTS; ch++) {
 					if (soloSet.has(ch)) {
 						if (typeof self._setMute === 'function') {
@@ -122,17 +138,19 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						}
 					}
 				}
-				self.inputSoloState = { soloChannels: soloSet }
+				self.inputSoloState = { soloChannels: soloSet, prevMute }
 				self.log?.('info', `Soloed input channels: ${soloChannels.join(', ')}`)
 			} else {
-				// Unsolo: unmute all
+				// Unsolo: restore previous mute states if known
+				const prevMute = currentSoloState?.prevMute || {}
 				for (let ch = 1; ch <= NUM_INPUTS; ch++) {
+					const shouldMute = prevMute[ch] ?? false
 					if (typeof self._setMute === 'function') {
-						self._setMute('input', ch, false)
+						self._setMute('input', ch, shouldMute)
 					}
 				}
 				self.inputSoloState = null
-				self.log?.('info', `Unsolo - unmuted all input channels`)
+				self.log?.('info', `Unsolo - restored previous mute states`)
 			}
 
 			// Update feedbacks
@@ -147,7 +165,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 
 	actions['input_gain_set'] = {
-		name: 'Input: Set gain (dB)',
+		name: 'Input: Gain',
 		options: [
 			{
 				type: 'multidropdown',
@@ -165,6 +183,8 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: [
 					{ id: 'value', label: 'Specific dB value' },
 					{ id: 'last', label: 'Last dB value' },
+					{ id: 'pair', label: 'Toggle between two values' },
+					{ id: 'nudge', label: 'Nudge (delta)' },
 				],
 			},
 			{
@@ -177,7 +197,58 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				step: 0.1,
 				isVisible: (o) => o.target === 'value',
 			},
-			{ type: 'number', id: 'fadeMs', label: 'Fade duration (ms)', default: 0, min: 0, max: 600000, step: 10 },
+			{
+				type: 'dropdown',
+				id: 'delta',
+				label: 'Delta (dB)',
+				default: '0',
+				choices: [
+					{ id: '-3', label: '-3.0 dB' },
+					{ id: '-2.5', label: '-2.5 dB' },
+					{ id: '-2', label: '-2.0 dB' },
+					{ id: '-1.5', label: '-1.5 dB' },
+					{ id: '-1', label: '-1.0 dB' },
+					{ id: '-0.5', label: '-0.5 dB' },
+					{ id: '0', label: '0.0 dB' },
+					{ id: '0.5', label: '+0.5 dB' },
+					{ id: '1', label: '+1.0 dB' },
+					{ id: '1.5', label: '+1.5 dB' },
+					{ id: '2', label: '+2.0 dB' },
+					{ id: '2.5', label: '+2.5 dB' },
+					{ id: '3', label: '+3.0 dB' },
+				],
+				isVisible: (o) => o.target === 'nudge',
+			},
+			{
+				type: 'number',
+				id: 'gain_a',
+				label: 'Gain A (dB)',
+				default: 0,
+				min: -90,
+				max: 10,
+				step: 0.1,
+				isVisible: (o) => o.target === 'pair',
+			},
+			{
+				type: 'number',
+				id: 'gain_b',
+				label: 'Gain B (dB)',
+				default: -6,
+				min: -90,
+				max: 10,
+				step: 0.1,
+				isVisible: (o) => o.target === 'pair',
+			},
+			{
+				type: 'number',
+				id: 'fadeMs',
+				label: 'Fade duration (ms)',
+				default: 0,
+				min: 0,
+				max: 600000,
+				step: 10,
+				isVisible: (o) => o.target !== 'nudge',
+			},
 			{
 				type: 'dropdown',
 				id: 'curve',
@@ -187,6 +258,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'linear', label: 'Linear (dB)' },
 					{ id: 'log', label: 'Logarithmic' },
 				],
+				isVisible: (o) => o.target !== 'nudge',
 			},
 		],
 		callback: (e) => {
@@ -196,7 +268,14 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				self.log?.('warn', 'No valid input channels selected')
 				return
 			}
-			const mode = e.options.target === 'last' || e.options.target === 'prev' ? 'last' : 'value'
+			const mode =
+				e.options.target === 'last' || e.options.target === 'prev'
+					? 'last'
+					: e.options.target === 'pair'
+						? 'pair'
+						: e.options.target === 'nudge'
+							? 'nudge'
+							: 'value'
 			const dur = Math.max(0, Number(e.options.fadeMs) || 0)
 			const curve = e.options.curve === 'log' ? 'log' : 'linear'
 			const btnId = e?.controlId || e?.event?.controlId || null
@@ -212,6 +291,62 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						self._startInputGainFade(ch, prev, dur, curve)
 					} else if (typeof self._setInputGain === 'function') {
 						self._setInputGain(ch, prev)
+					}
+				}
+				return
+			}
+
+			if (mode === 'nudge') {
+				const d = Number(e.options.delta)
+				const curveNudge = e.options.curve === 'log' ? 'log' : 'linear'
+				const durNudge = 0
+				for (const ch of chs) {
+					if (typeof self._subWrite === 'function') {
+						self._subWrite(`/processing/input/${ch}/gain`)
+					}
+					if (typeof self._beginPrevCaptureWindow === 'function') {
+						self._beginPrevCaptureWindow('input', ch, btnId, 300)
+					}
+					if (typeof self._rememberPrevInputGain === 'function') {
+						self._rememberPrevInputGain(ch, btnId)
+					}
+
+					const cur = Number(self?.inputGain?.[ch])
+					const base = Number.isFinite(cur) ? cur : 0
+					const target = base + (Number.isFinite(d) ? d : 0)
+
+					if (durNudge > 0 && typeof self._startInputGainFade === 'function') {
+						self._startInputGainFade(ch, target, durNudge, curveNudge)
+					} else if (typeof self._setInputGain === 'function') {
+						self._setInputGain(ch, target)
+					}
+				}
+				return
+			}
+
+			if (mode === 'pair') {
+				const gA = Number(e.options.gain_a)
+				const gB = Number(e.options.gain_b)
+				for (const ch of chs) {
+					if (typeof self._subWrite === 'function') {
+						self._subWrite(`/processing/input/${ch}/gain`)
+					}
+					if (!self._inputGainToggle) self._inputGainToggle = {}
+					const lastWasA = self._inputGainToggle[ch] === 'A'
+					const targetGain = lastWasA ? gB : gA
+					self._inputGainToggle[ch] = lastWasA ? 'B' : 'A'
+
+					if (typeof self._beginPrevCaptureWindow === 'function') {
+						self._beginPrevCaptureWindow('input', ch, btnId, 300)
+					}
+					if (typeof self._rememberPrevInputGain === 'function') {
+						self._rememberPrevInputGain(ch, btnId)
+					}
+
+					if (dur > 0 && typeof self._startInputGainFade === 'function') {
+						self._startInputGainFade(ch, targetGain, dur, curve)
+					} else if (typeof self._setInputGain === 'function') {
+						self._setInputGain(ch, targetGain)
 					}
 				}
 				return
@@ -237,61 +372,12 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
-	actions['input_gain_revert'] = {
-		name: 'Input: Revert to previous gain',
-		options: [
-			{
-				type: 'multidropdown',
-				id: 'chs',
-				label: 'Input channel(s)',
-				default: [],
-				choices: inputChoicesFriendly,
-				minSelection: 0,
-			},
-			{ type: 'number', id: 'fadeMs', label: 'Fade duration (ms)', default: 0, min: 0, max: 600000, step: 10 },
-			{
-				type: 'dropdown',
-				id: 'curve',
-				label: 'Curve (used if fading)',
-				default: 'linear',
-				choices: [
-					{ id: 'linear', label: 'Linear (dB)' },
-					{ id: 'log', label: 'Logarithmic' },
-				],
-			},
-		],
-		callback: (e) => {
-			if (!self) return
-			const chs = safeGetChannels(e.options, 'chs', NUM_INPUTS)
-			if (chs.length === 0) {
-				self.log?.('warn', 'No valid input channels selected')
-				return
-			}
-			const dur = Math.max(0, Number(e.options.fadeMs) || 0)
-			const curve = e.options.curve === 'log' ? 'log' : 'linear'
-			const btnId = e?.controlId || e?.event?.controlId || null
-
-			for (const ch of chs) {
-				const prev = typeof self._getPrevInputGain === 'function' ? self._getPrevInputGain(ch, btnId) : null
-				if (prev == null) {
-					self.log?.('info', `Input ch ${ch}: no previous gain stored; revert skipped`)
-					continue
-				}
-				if (dur > 0 && typeof self._startInputGainFade === 'function') {
-					self._startInputGainFade(ch, prev, dur, curve)
-				} else if (typeof self._setInputGain === 'function') {
-					self._setInputGain(ch, prev)
-				}
-			}
-		},
-	}
-
 	// =========================
 	// ======= DELAY ===========
 	// =========================
 
 	actions['input_delay_set'] = {
-		name: 'Input: Set delay (ms)',
+		name: 'Input: Delay',
 		options: [
 			{
 				type: 'multidropdown',
@@ -301,8 +387,32 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: inputChoicesFriendly,
 				minSelection: 0,
 			},
-			{ type: 'number', id: 'ms', label: 'Delay (ms)', default: 0, min: 0, max: 500, step: 0.01 },
-			{ type: 'checkbox', id: 'relative', label: 'Add to current delay (relative)', default: false },
+			{
+				type: 'dropdown',
+				id: 'type',
+				label: 'Delay type (unit)',
+				default: 'unchanged',
+				choices: [
+					{ id: 'unchanged', label: '— Unchanged —' },
+					{ id: '0', label: 'milliseconds' },
+					{ id: '1', label: 'feet' },
+					{ id: '2', label: 'meters' },
+					{ id: '3', label: 'frames (24fps)' },
+					{ id: '4', label: 'frames (25fps)' },
+					{ id: '5', label: 'frames (30fps)' },
+					{ id: '6', label: 'samples (96kHz)' },
+				],
+			},
+			{
+				type: 'number',
+				id: 'value',
+				label: 'Delay value (uses unit above)',
+				default: 0,
+				min: 0,
+				max: 500,
+				step: 0.01,
+				isVisible: (o) => o.type !== 'unchanged',
+			},
 		],
 		callback: (e) => {
 			if (!self) return
@@ -311,18 +421,41 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				self.log?.('warn', 'No valid input channels selected')
 				return
 			}
-			const wantRelative = !!e.options.relative
-			const reqMs = Number(e.options.ms)
+			const typeId = String(e.options.type || 'unchanged')
+			const valueRaw = Number(e.options.value)
 			const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 			const roundTo01 = (v) => Math.round(v / 0.01) * 0.01
 
-			for (const ch of chs) {
-				let targetMs = clamp(Number.isFinite(reqMs) ? reqMs : 0, 0, 2000)
-				if (wantRelative) {
-					const curMs = Number(self?.inputDelay?.[ch]?.ms)
-					if (Number.isFinite(curMs)) targetMs = curMs + targetMs
+			const valueToMs = (val, typeKey) => {
+				const n = Number(val)
+				if (!Number.isFinite(n)) return 0
+				const SPEED_FT_PER_SEC = 1125
+				const SPEED_M_PER_SEC = 343
+				switch (typeKey) {
+					case '1': // feet
+						return (n * 1000) / SPEED_FT_PER_SEC
+					case '2': // meters
+						return (n * 1000) / SPEED_M_PER_SEC
+					case '3': // frames 24 fps
+						return (n / 24) * 1000
+					case '4': // frames 25 fps
+						return (n / 25) * 1000
+					case '5': // frames 30 fps
+						return (n / 30) * 1000
+					case '6': // samples (96kHz)
+						return n / 96
+					case '0': // milliseconds
+					default:
+						return n
 				}
-				targetMs = roundTo01(targetMs)
+			}
+
+			for (const ch of chs) {
+				if (typeId === 'unchanged') {
+					continue
+				}
+				const msFromValue = valueToMs(valueRaw, typeId === 'unchanged' ? '0' : typeId)
+				const targetMs = roundTo01(clamp(msFromValue, 0, 500))
 
 				if (typeof self._setInputDelayMs === 'function') {
 					self._setInputDelayMs(ch, targetMs)
@@ -378,7 +511,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				: []
 
 			if (groups.length === 0) {
-				self.log?.('warn', 'No valid link groups selected')
+				self.log?.('warn', 'No valid input link groups selected')
 				return
 			}
 
@@ -639,6 +772,87 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
+	// Chingonizer: symmetric U-Shaping control (bands 1-4 freq/slope, bands 1/5 mirrored gain)
+	actions['input_ushaping_chingonizer'] = {
+		name: 'Inputs: Chingonizer (U-Shaping Symmetry)',
+		description:
+			'Set the same center frequency for bands 1-4, mirror gain between bands 1 and 5 (inverted on 5), and set slope to 1 on bands 1-4.',
+		options: [
+			{
+				type: 'multidropdown',
+				id: 'chs',
+				label: 'Input channel(s)',
+				default: [],
+				choices: inputChoicesFriendly,
+				minSelection: 0,
+			},
+			{
+				type: 'number',
+				id: 'frequency',
+				label: 'Center frequency for bands 1-4 (Hz)',
+				default: 1000,
+				min: 160,
+				max: 2500,
+				step: 1,
+			},
+			{
+				type: 'number',
+				id: 'gain',
+				label: 'Band 1 gain (Band 5 gets inverted)',
+				default: 3,
+				min: -18,
+				max: 18,
+				step: 0.1,
+			},
+		],
+		callback: (e) => {
+			if (!self || typeof self._cmdSendLine !== 'function') return
+
+			const chs = safeGetChannels(e.options, 'chs', NUM_INPUTS)
+			if (chs.length === 0) {
+				self.log?.('warn', 'No valid input channels selected')
+				return
+			}
+
+			const freqRaw = Number(e.options.frequency ?? 1000)
+			const freq = Math.max(160, Math.min(2500, freqRaw))
+
+			const gainRaw = Number(e.options.gain ?? 0)
+			const band1Gain = Math.max(-18, Math.min(18, gainRaw))
+			const band5Gain = Math.max(-18, Math.min(18, -band1Gain))
+
+			const slopeValue = 1
+
+			for (const ch of chs) {
+				// Frequencies and slopes for bands 1-4
+				for (let band = 1; band <= 4; band++) {
+					self._cmdSendLine(`/processing/input/${ch}/ushaping/${band}/frequency=${freq}`)
+					self._cmdSendLine(`/processing/input/${ch}/ushaping/${band}/slope=${slopeValue}`)
+
+					if (typeof self._applyInputUShaping === 'function') {
+						self._applyInputUShaping(ch, band, 'frequency', freq)
+						self._applyInputUShaping(ch, band, 'slope', slopeValue)
+					}
+				}
+
+				// Mirrored gains for bands 1 and 5
+				self._cmdSendLine(`/processing/input/${ch}/ushaping/1/gain=${band1Gain}`)
+				self._cmdSendLine(`/processing/input/${ch}/ushaping/5/gain=${band5Gain}`)
+
+				if (typeof self._applyInputUShaping === 'function') {
+					self._applyInputUShaping(ch, 1, 'gain', band1Gain)
+					self._applyInputUShaping(ch, 5, 'gain', band5Gain)
+				}
+
+				const name = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
+				self.log?.(
+					'info',
+					`Chingonizer: Input ${ch}${name} freq=${freq}Hz slope=${slopeValue} (bands 1-4) gain1=${band1Gain}dB gain5=${band5Gain}dB`,
+				)
+			}
+		},
+	}
+
 	actions['input_ushaping_bypass'] = {
 		name: 'Input: U-Shaping Bypass',
 		options: [
@@ -821,6 +1035,351 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 			const bandNames = ['', '20-2500 Hz', '40-5000 Hz', '80-10k Hz', '160-20k Hz', 'HF (no freq)']
 			self.log?.('info', `U-Shaping: Selected Band ${band} (${bandNames[band]})`)
+		},
+	}
+
+	// Chingonizer knob controls (mirrored gain + shared frequency for bands 1-4)
+	actions['input_ushaping_chingonizer_knob_gain'] = {
+		name: 'Input: Chingonizer Knob - Gain (Band1/Band5 mirrored)',
+		description:
+			'Adjust Band 1 gain and apply inverted gain to Band 5 for selected input(s). Supports fine/coarse mode when the rotary is pressed.',
+		options: [
+			{
+				type: 'static-text',
+				id: 'info',
+				label: 'Selection',
+				value: 'Uses currently selected input channel(s). Band 1 gain is mirrored (inverted) to Band 5.',
+			},
+			{
+				type: 'multidropdown',
+				id: 'chs',
+				label: 'Input channel(s) (optional override)',
+				default: [],
+				choices: inputChoicesFriendly,
+				minSelection: 0,
+			},
+			{
+				type: 'number',
+				id: 'delta_fine',
+				label: 'Gain delta fine (dB)',
+				default: 0.1,
+				min: -15,
+				max: 15,
+				step: 0.1,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Gain delta coarse (dB)',
+				default: 0.5,
+				min: -15,
+				max: 15,
+				step: 0.1,
+			},
+		],
+		callback: (e) => {
+			if (!self || typeof self._cmdSendLine !== 'function') return
+
+			const overrideChs = safeGetChannels(e.options, 'chs', NUM_INPUTS)
+			const chs = overrideChs.length > 0 ? overrideChs : self?._ushapingKnobControl?.selectedInputs || [1]
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self._rotaryPressState?.[key]
+
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = 0.1
+
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
+			}
+			const baseMag = Math.abs(base)
+			let delta = baseMag * sign
+
+			// Initialize storage if needed
+			if (!self.inputUShaping) self.inputUShaping = {}
+
+			for (const ch of chs) {
+				if (!self.inputUShaping[ch]) self.inputUShaping[ch] = {}
+				if (!self.inputUShaping[ch][1]) self.inputUShaping[ch][1] = {}
+				if (!self.inputUShaping[ch][5]) self.inputUShaping[ch][5] = {}
+
+				const currentGain = Number(self.inputUShaping[ch][1].gain ?? 0)
+				const newGain = Math.max(-18, Math.min(18, currentGain + delta))
+				const mirroredGain = Math.max(-18, Math.min(18, -newGain))
+
+				self._cmdSendLine(`/processing/input/${ch}/ushaping/1/gain=${newGain}`)
+				self._cmdSendLine(`/processing/input/${ch}/ushaping/5/gain=${mirroredGain}`)
+
+				if (typeof self._applyInputUShaping === 'function') {
+					self._applyInputUShaping(ch, 1, 'gain', newGain)
+					self._applyInputUShaping(ch, 5, 'gain', mirroredGain)
+				}
+
+				const inputName = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
+				const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
+				self.log?.(
+					'info',
+					`Chingonizer (${modeLabel}): Input ${ch}${inputName} Band1 gain ${currentGain.toFixed(1)} ${deltaStr} = ${newGain.toFixed(1)} dB; Band5 gain ${mirroredGain.toFixed(1)} dB`,
+				)
+			}
+
+			if (typeof self._updateUShapingCurrentValues === 'function') {
+				self._updateUShapingCurrentValues()
+			}
+		},
+	}
+
+	actions['input_ushaping_chingonizer_knob_frequency'] = {
+		name: 'Input: Chingonizer Knob - Frequency (Bands 1-4)',
+		description:
+			'Adjust shared center frequency for bands 1-4 (160-2500 Hz). Supports fine/coarse mode when the rotary is pressed.',
+		options: [
+			{
+				type: 'static-text',
+				id: 'info',
+				label: 'Selection',
+				value: 'Uses currently selected input channel(s). Band 5 has no frequency parameter.',
+			},
+			{
+				type: 'multidropdown',
+				id: 'chs',
+				label: 'Input channel(s) (optional override)',
+				default: [],
+				choices: inputChoicesFriendly,
+				minSelection: 0,
+			},
+			{
+				type: 'number',
+				id: 'delta_fine',
+				label: 'Frequency delta fine (Hz)',
+				default: 10,
+				min: -1000,
+				max: 1000,
+				step: 1,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Frequency delta coarse (Hz)',
+				default: 50,
+				min: -1000,
+				max: 1000,
+				step: 1,
+			},
+		],
+		callback: (e) => {
+			if (!self || typeof self._cmdSendLine !== 'function') return
+
+			const overrideChs = safeGetChannels(e.options, 'chs', NUM_INPUTS)
+			const chs = overrideChs.length > 0 ? overrideChs : self?._ushapingKnobControl?.selectedInputs || [1]
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self._rotaryPressState?.[key]
+
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = 10
+
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
+			}
+			const baseMag = Math.abs(base)
+			let delta = baseMag * sign
+
+			// Initialize storage if needed
+			if (!self.inputUShaping) self.inputUShaping = {}
+
+			for (const ch of chs) {
+				if (!self.inputUShaping[ch]) self.inputUShaping[ch] = {}
+				if (!self.inputUShaping[ch][1]) self.inputUShaping[ch][1] = {}
+
+				const currentFreq = Number(self.inputUShaping[ch][1].frequency ?? 1000)
+				const newFreq = Math.max(160, Math.min(2500, currentFreq + delta))
+
+				for (let band = 1; band <= 4; band++) {
+					if (!self.inputUShaping[ch][band]) self.inputUShaping[ch][band] = {}
+
+					self._cmdSendLine(`/processing/input/${ch}/ushaping/${band}/frequency=${newFreq}`)
+
+					if (typeof self._applyInputUShaping === 'function') {
+						self._applyInputUShaping(ch, band, 'frequency', newFreq)
+					}
+				}
+
+				const inputName = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
+				const deltaStr = delta >= 0 ? `+${delta}` : delta
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
+				self.log?.(
+					'info',
+					`Chingonizer (${modeLabel}): Input ${ch}${inputName} bands 1-4 frequency ${currentFreq} ${deltaStr} = ${newFreq} Hz`,
+				)
+			}
+
+			if (typeof self._updateUShapingCurrentValues === 'function') {
+				self._updateUShapingCurrentValues()
+			}
+		},
+	}
+
+	actions['input_ushaping_chingonizer_freq_coarse_mode'] = {
+		name: 'Input: Chingonizer Frequency Coarse Mode',
+		description: 'Use with the Chingonizer frequency knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'Chingonizer freq coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressState) self._rotaryPressState = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressState[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressState[key]
+			} else {
+				self._rotaryPressState[key] = !self._rotaryPressState[key]
+				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
+			}
+		},
+	}
+
+	actions['input_ushaping_chingonizer_gain_coarse_mode'] = {
+		name: 'Input: Chingonizer Gain Coarse Mode',
+		description: 'Use with the gain knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'Chingonizer coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressState) self._rotaryPressState = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressState[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressState[key]
+			} else {
+				self._rotaryPressState[key] = !self._rotaryPressState[key]
+				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
+			}
+		},
+	}
+
+	actions['input_ushaping_chingonizer_knob_slope'] = {
+		name: 'Input: Chingonizer Knob - Slope (Bands 1-4)',
+		description: 'Adjust slope (1-6) for bands 1-4 together for the selected input(s).',
+		options: [
+			{
+				type: 'static-text',
+				id: 'info',
+				label: 'Selection',
+				value: 'Uses currently selected input channel(s). Band 5 has no slope in this mode.',
+			},
+			{
+				type: 'dropdown',
+				id: 'direction',
+				label: 'Direction - for button press',
+				default: 'up',
+				choices: [
+					{ id: 'up', label: 'Increase' },
+					{ id: 'down', label: 'Decrease' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self || typeof self._cmdSendLine !== 'function') return
+
+			const chs = self?._ushapingKnobControl?.selectedInputs || [1]
+			let direction = e.options.direction || 'up'
+			let stepCount = 1
+
+			// Try to honor encoder direction if provided by Companion
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta < 0) direction = 'down'
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta > 0) direction = 'up'
+
+			// Time-based acceleration for rotary encoders
+			if (e.surfaceId !== undefined) {
+				const now = Date.now()
+				const accelKey = `chingonizer_slope_${e.surfaceId || 'default'}`
+
+				if (!self._rotaryAccel) self._rotaryAccel = {}
+
+				const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
+				const timeDiff = now - lastRotation.time
+
+				let speedTier = 0
+				if (timeDiff < 100) {
+					speedTier = Math.min(lastRotation.count + 1, 3)
+				}
+
+				self._rotaryAccel[accelKey] = { time: now, count: speedTier }
+
+				// Gentle acceleration across the small 1-4 range
+				const stepTiers = [1, 1, 2, 3]
+				stepCount = stepTiers[speedTier]
+			}
+
+			// Initialize storage if needed
+			if (!self.inputUShaping) self.inputUShaping = {}
+
+			for (const ch of chs) {
+				if (!self.inputUShaping[ch]) self.inputUShaping[ch] = {}
+				if (!self.inputUShaping[ch][1]) self.inputUShaping[ch][1] = {}
+
+				const currentSlope = Math.max(1, Math.min(6, Number(self.inputUShaping[ch][1].slope ?? 1)))
+				let newSlope =
+					direction === 'up' ? Math.min(6, currentSlope + stepCount) : Math.max(1, currentSlope - stepCount)
+
+				for (let band = 1; band <= 4; band++) {
+					if (!self.inputUShaping[ch][band]) self.inputUShaping[ch][band] = {}
+
+					self._cmdSendLine(`/processing/input/${ch}/ushaping/${band}/slope=${newSlope}`)
+
+					if (typeof self._applyInputUShaping === 'function') {
+						self._applyInputUShaping(ch, band, 'slope', newSlope)
+					}
+				}
+
+				const inputName = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
+				self.log?.(
+					'info',
+					`Chingonizer: Input ${ch}${inputName} bands 1-4 slope ${currentSlope} -> ${newSlope}`,
+				)
+			}
+
+			if (typeof self._updateUShapingCurrentValues === 'function') {
+				self._updateUShapingCurrentValues()
+			}
 		},
 	}
 
