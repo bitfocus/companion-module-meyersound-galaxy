@@ -1,5 +1,5 @@
 {
-	"id": "meyersound-galaxy",
+	"id": "companion-module-meyersound-galaxy",
 	"name": "Meyer Sound Galaxy",
 	"shortname": "Galaxy",
 	"description": "Control a Meyer Sound Galaxy device via TCP",
@@ -16,7 +16,7 @@
 	"runtime": {
 		"type": "node18",
 		"api": "nodejs-ipc",
-		"apiVersion": "1.0.0",
+		"apiVersion": "0.0.0",
 		"entrypoint": "main.js"
 	},
 	"legacyIds": [],
