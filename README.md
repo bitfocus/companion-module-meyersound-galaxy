@@ -1,6 +1,6 @@
 This is the unofficial module for Meyer Sound Galaxy.
 
-Tested with real and virtual Galaxy, compatible with 408, 816, 816AES and 816Bluehorn
+Tested with real Galaxy 816 and virtual Galaxy, but should be compatible with 408,816AES. Bluehorn has some difference that needs to be tested.
 
 I starting coding this using ChatGPT5 in August 2025 during the main act of a festival I was doing. Yeah, no sh\*\*. I am nowhere near a real programmer, and I have profound respect for all of you guys. I spend around 10 hours in total so far. Lot of prompt and test here and there and various GUI improvement.
 
