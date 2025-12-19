@@ -776,7 +776,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	actions['input_ushaping_chingonizer'] = {
 		name: 'Inputs: Chingonizer (U-Shaping Symmetry)',
 		description:
-			'Set the same center frequency for bands 1-4, mirror gain between bands 1 and 5 (inverted on 5), and set slope to 1 on bands 1-4.',
+			'Set shared center frequency/slope for bands 1-4 and mirror gain between bands 1 and 5 (inverted on 5).',
 		options: [
 			{
 				type: 'multidropdown',
@@ -794,6 +794,20 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 160,
 				max: 2500,
 				step: 1,
+			},
+			{
+				type: 'dropdown',
+				id: 'slope',
+				label: 'Slope for bands 1-4',
+				default: 1,
+				choices: [
+					{ id: 1, label: '6 dB/oct' },
+					{ id: 2, label: '12 dB/oct' },
+					{ id: 3, label: '18 dB/oct' },
+					{ id: 4, label: '24 dB/oct' },
+					{ id: 5, label: '30 dB/oct' },
+					{ id: 6, label: '36 dB/oct' },
+				],
 			},
 			{
 				type: 'number',
@@ -816,12 +830,13 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 			const freqRaw = Number(e.options.frequency ?? 1000)
 			const freq = Math.max(160, Math.min(2500, freqRaw))
+			const slopeRaw = Number(e.options.slope ?? 1)
+			const slopeValue = Math.max(1, Math.min(6, slopeRaw))
 
 			const gainRaw = Number(e.options.gain ?? 0)
 			const band1Gain = Math.max(-18, Math.min(18, gainRaw))
 			const band5Gain = Math.max(-18, Math.min(18, -band1Gain))
-
-			const slopeValue = 1
+			const slopeLabel = { 1: '6 dB/oct', 2: '12 dB/oct', 3: '18 dB/oct', 4: '24 dB/oct', 5: '30 dB/oct', 6: '36 dB/oct' }
 
 			for (const ch of chs) {
 				// Frequencies and slopes for bands 1-4
@@ -845,9 +860,10 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				}
 
 				const name = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
+				const slopeStr = slopeLabel[slopeValue] || slopeValue
 				self.log?.(
 					'info',
-					`Chingonizer: Input ${ch}${name} freq=${freq}Hz slope=${slopeValue} (bands 1-4) gain1=${band1Gain}dB gain5=${band5Gain}dB`,
+					`Chingonizer: Input ${ch}${name} freq=${freq}Hz slope=${slopeStr} (bands 1-4) gain1=${band1Gain}dB gain5=${band5Gain}dB`,
 				)
 			}
 		},
@@ -1038,9 +1054,46 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
+	actions['input_ushaping_gain_coarse_mode'] = {
+		name: 'Input: U-Shaping Gain Coarse Mode',
+		description: 'Use with the U-Shaping gain knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'U-Shaping coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressState) self._rotaryPressState = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressState[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressState[key]
+			} else {
+				self._rotaryPressState[key] = !self._rotaryPressState[key]
+				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
+			}
+		},
+	}
+
 	// Chingonizer knob controls (mirrored gain + shared frequency for bands 1-4)
 	actions['input_ushaping_chingonizer_knob_gain'] = {
-		name: 'Input: Chingonizer Knob - Gain (Band1/Band5 mirrored)',
+		name: 'Input: Chingonizer - Gain (Band1/Band5 mirrored)',
 		description:
 			'Adjust Band 1 gain and apply inverted gain to Band 5 for selected input(s). Supports fine/coarse mode when the rotary is pressed.',
 		options: [
@@ -1131,7 +1184,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	}
 
 	actions['input_ushaping_chingonizer_knob_frequency'] = {
-		name: 'Input: Chingonizer Knob - Frequency (Bands 1-4)',
+		name: 'Input: Chingonizer - Frequency (Bands 1-4)',
 		description:
 			'Adjust shared center frequency for bands 1-4 (160-2500 Hz). Supports fine/coarse mode when the rotary is pressed.',
 		options: [
@@ -1296,7 +1349,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	}
 
 	actions['input_ushaping_chingonizer_knob_slope'] = {
-		name: 'Input: Chingonizer Knob - Slope (Bands 1-4)',
+		name: 'Input: Chingonizer - Slope (Bands 1-4)',
 		description: 'Adjust slope (1-6) for bands 1-4 together for the selected input(s).',
 		options: [
 			{
@@ -1386,7 +1439,8 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// U-Shaping Knob Control System - Knob Actions
 	actions['input_ushaping_knob_gain'] = {
 		name: 'Input: U-Shaping Knob - Gain',
-		description: 'Adjust gain for the selected input(s) and band. Acceleration (3 tiers): 0.1 → 0.3 → 0.5 dB.',
+		description:
+			'Adjust gain for the selected input(s) and band. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action.',
 		options: [
 			{
 				type: 'static-text',
@@ -1396,8 +1450,17 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			},
 			{
 				type: 'number',
-				id: 'delta',
-				label: 'Gain delta (dB) - for button press',
+				id: 'delta_fine',
+				label: 'Gain delta fine (dB)',
+				default: 0.1,
+				min: -15,
+				max: 15,
+				step: 0.1,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Gain delta coarse (dB)',
 				default: 0.5,
 				min: -15,
 				max: 15,
@@ -1409,30 +1472,17 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 			const chs = self?._ushapingKnobControl?.selectedInputs || [1]
 			const band = self?._ushapingKnobControl?.selectedBand || 1
-			let delta = Number(e.options.delta ?? 0)
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self?._rotaryPressState?.[key]
 
-			// Time-based acceleration for rotary encoders
-			if (e.surfaceId !== undefined) {
-				const now = Date.now()
-				const accelKey = `ushaping_gain_${e.surfaceId || 'default'}`
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 0.5 : 0.1
 
-				if (!self._rotaryAccel) self._rotaryAccel = {}
-
-				const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
-				const timeDiff = now - lastRotation.time
-
-				// 4-tier acceleration based on rotation speed
-				let speedTier = 0
-				if (timeDiff < 100) {
-					speedTier = Math.min(lastRotation.count + 1, 3)
-				}
-
-				self._rotaryAccel[accelKey] = { time: now, count: speedTier }
-
-				// Acceleration tiers: 0 = 0.1dB, 1 = 0.5dB, 2 = 1dB, 3 = 2dB (faster)
-				const deltaTiers = [0.1, 0.5, 1.0, 2.0]
-				delta = deltaTiers[speedTier] * (delta >= 0 ? 1 : -1)
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
 			}
+			const delta = Math.abs(base) * sign
 
 			// Initialize storage if needed
 			if (!self.inputUShaping) self.inputUShaping = {}
@@ -1463,9 +1513,10 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 				const inputName = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
 				const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
 				self.log?.(
 					'info',
-					`U-Shaping: Input ${ch}${inputName} Band ${band} gain ${currentValue.toFixed(1)} ${deltaStr} = ${finalValue.toFixed(1)} dB`,
+					`U-Shaping (${modeLabel}): Input ${ch}${inputName} Band ${band} gain ${currentValue.toFixed(1)} ${deltaStr} = ${finalValue.toFixed(1)} dB`,
 				)
 			}
 
@@ -1883,16 +1934,62 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
+	actions['input_eq_gain_coarse_mode'] = {
+		name: 'Input: Parametric EQ Gain Coarse Mode',
+		description: 'Use with the input PEQ gain knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'Input PEQ coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressState) self._rotaryPressState = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressState[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressState[key]
+			} else {
+				self._rotaryPressState[key] = !self._rotaryPressState[key]
+				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
+			}
+		},
+	}
+
 	actions['input_eq_knob_gain'] = {
 		name: 'Input: Parametric EQ Knob - Gain',
 		description:
-			'Adjust gain for the selected input(s) and band. Range: -18 to +18 dB. Acceleration (3 tiers): 0.1 → 0.5 → 1 dB.',
+			'Adjust gain for the selected input(s) and band. Range: -18 to +18 dB. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action.',
 		options: [
 			{
 				type: 'number',
-				id: 'delta',
-				label: 'Delta (dB) - for button press',
+				id: 'delta_fine',
+				label: 'Gain delta fine (dB)',
 				default: 0.1,
+				min: -18,
+				max: 18,
+				step: 0.1,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Gain delta coarse (dB)',
+				default: 0.5,
 				min: -18,
 				max: 18,
 				step: 0.1,
@@ -1901,30 +1998,17 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		callback: (e) => {
 			const chs = self?._eqKnobControl?.selectedInputs || [1]
 			const band = self?._eqKnobControl?.selectedBand || 1
-			let delta = Number(e.options.delta ?? 0)
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self?._rotaryPressState?.[key]
 
-			// Time-based acceleration for rotary encoders
-			if (e.surfaceId !== undefined) {
-				const now = Date.now()
-				const accelKey = `eq_gain_${e.surfaceId || 'default'}`
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 0.5 : 0.1
 
-				if (!self._rotaryAccel) self._rotaryAccel = {}
-
-				const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
-				const timeDiff = now - lastRotation.time
-
-				// 4-tier acceleration based on rotation speed
-				let speedTier = 0
-				if (timeDiff < 100) {
-					speedTier = Math.min(lastRotation.count + 1, 3)
-				}
-
-				self._rotaryAccel[accelKey] = { time: now, count: speedTier }
-
-				// Acceleration tiers: 0 = 0.1dB, 1 = 0.5dB, 2 = 1dB, 3 = 2dB (faster)
-				const deltaTiers = [0.1, 0.5, 1.0, 2.0]
-				delta = deltaTiers[speedTier] * (delta >= 0 ? 1 : -1)
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
 			}
+			const delta = Math.abs(base) * sign
 
 			if (!self.inputEQ) self.inputEQ = {}
 
@@ -1952,9 +2036,11 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				}
 
 				const inputName = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
+				const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
 				self.log?.(
 					'info',
-					`Parametric EQ: Input ${ch}${inputName} Band ${band} gain ${currentValue.toFixed(1)} + ${delta.toFixed(1)} = ${finalValue.toFixed(1)} dB`,
+					`Parametric EQ (${modeLabel}): Input ${ch}${inputName} Band ${band} gain ${currentValue.toFixed(1)} ${deltaStr} = ${finalValue.toFixed(1)} dB`,
 				)
 			}
 

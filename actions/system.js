@@ -659,7 +659,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'recovery', label: 'Recovery' },
 					{ id: 'defaults', label: 'Factory defaults' },
 					//{ id: 'diagnostic', label: 'Diagnostic' },
-					{ id: 'core', label: 'Core' },
+					{ id: 'core', label: 'Spacemap Mode' },
 				],
 			},
 			{

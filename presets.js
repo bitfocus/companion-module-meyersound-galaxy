@@ -1522,23 +1522,45 @@ function ushapingKnobPreset(self, param) {
 		},
 		steps: [
 			{
-				down: [
-					{
-						actionId: 'input_ushaping_knob_band_bypass',
-						options: {},
-					},
-				],
-				up: [],
+				down:
+					param === 'gain'
+						? [
+								{
+									actionId: 'input_ushaping_gain_coarse_mode',
+									options: { mode: 'press' },
+								},
+							]
+						: [
+								{
+									actionId: 'input_ushaping_knob_band_bypass',
+									options: {},
+								},
+							],
+				up:
+					param === 'gain'
+						? [
+								{
+									actionId: 'input_ushaping_gain_coarse_mode',
+									options: { mode: 'release' },
+								},
+							]
+						: [],
 				rotate_left: [
 					{
 						actionId: `input_ushaping_knob_${param}`,
-						options: param === 'slope' ? { delta: -1, direction: 'down' } : { delta: -deltas[param] },
+						options:
+							param === 'slope'
+								? { delta: -1, direction: 'down' }
+								: { delta_fine: -0.1, delta_coarse: -0.5 },
 					},
 				],
 				rotate_right: [
 					{
 						actionId: `input_ushaping_knob_${param}`,
-						options: param === 'slope' ? { delta: 1, direction: 'up' } : { delta: deltas[param] },
+						options:
+							param === 'slope'
+								? { delta: 1, direction: 'up' }
+								: { delta_fine: 0.1, delta_coarse: 0.5 },
 					},
 				],
 			},
@@ -1654,6 +1676,205 @@ function ushapingRotaryPreset(self, param, ch, band) {
 				style: { color: 0xffffff, bgcolor: 0x00aa00 },
 			},
 		],
+	}
+}
+
+// Chingonizer presets (share U-Shaping selection state)
+function chingonizerInputSelectPreset(self, ch) {
+	const inst = self.label || 'Galaxy'
+	return {
+		type: 'button',
+		category: 'Inputs/Chingonizer',
+		name: `Chingonizer: Select Input ${ch}`,
+		style: {
+			text: `Chingonizer\nIn ${ch}\n$(${inst}:input_${ch}_name)`,
+			size: '14',
+			color: 0xffffff,
+			bgcolor: 0x111111,
+			alignment: 'center:middle',
+		},
+		steps: [
+			{
+				down: [
+					{
+						actionId: 'input_ushaping_select_input',
+						options: { chs: [String(ch)] },
+					},
+				],
+				up: [],
+			},
+		],
+		feedbacks: [
+			{
+				feedbackId: 'ushaping_input_selected',
+				options: { ch: String(ch) },
+				style: { color: 0x000000, bgcolor: 0x00ff00 },
+			},
+		],
+	}
+}
+
+function chingonizerSetupPreset(self) {
+	return {
+		type: 'button',
+		category: 'Inputs/Chingonizer',
+		name: 'Chingonizer: Apply Symmetry',
+		style: {
+			text: `Chingonizer\nSet bands 1-4 freq/slope\nMirror gain B1/B5`,
+			size: '12',
+			color: 0xffffff,
+			bgcolor: 0x004488,
+			alignment: 'center:middle',
+		},
+		steps: [
+			{
+				down: [
+					{
+						actionId: 'input_ushaping_chingonizer',
+						options: { frequency: 1000, slope: 1, gain: 3 },
+					},
+				],
+				up: [],
+			},
+		],
+		feedbacks: [],
+	}
+}
+
+function chingonizerGainPreset(self) {
+	const inst = self.label || 'Galaxy'
+	return {
+		type: 'button',
+		category: 'Inputs/Chingonizer',
+		name: 'Chingonizer: Gain (B1/B5 mirrored)',
+		style: {
+			text: `Chingonizer\nGain (B1↔B5)\n$(${inst}:ushaping_current_gain) dB`,
+			size: '12',
+			color: 0xffffff,
+			bgcolor: 0x0055aa,
+			alignment: 'center:middle',
+		},
+		options: {
+			rotaryActions: true,
+			stepAutoProgress: false,
+		},
+		steps: [
+			{
+				down: [
+					{
+						actionId: 'input_ushaping_chingonizer_gain_coarse_mode',
+						options: { mode: 'press' },
+					},
+				],
+				up: [
+					{
+						actionId: 'input_ushaping_chingonizer_gain_coarse_mode',
+						options: { mode: 'release' },
+					},
+				],
+				rotate_left: [
+					{
+						actionId: 'input_ushaping_chingonizer_knob_gain',
+						options: { delta_fine: -0.1, delta_coarse: -0.5 },
+					},
+				],
+				rotate_right: [
+					{
+						actionId: 'input_ushaping_chingonizer_knob_gain',
+						options: { delta_fine: 0.1, delta_coarse: 0.5 },
+					},
+				],
+			},
+		],
+		feedbacks: [],
+	}
+}
+
+function chingonizerFrequencyPreset(self) {
+	const inst = self.label || 'Galaxy'
+	return {
+		type: 'button',
+		category: 'Inputs/Chingonizer',
+		name: 'Chingonizer: Frequency (Bands 1-4)',
+		style: {
+			text: `Chingonizer\nFreq (B1-4)\n$(${inst}:ushaping_current_frequency) Hz`,
+			size: '12',
+			color: 0xffffff,
+			bgcolor: 0x0066cc,
+			alignment: 'center:middle',
+		},
+		options: {
+			rotaryActions: true,
+			stepAutoProgress: false,
+		},
+		steps: [
+			{
+				down: [
+					{
+						actionId: 'input_ushaping_chingonizer_freq_coarse_mode',
+						options: { mode: 'press' },
+					},
+				],
+				up: [
+					{
+						actionId: 'input_ushaping_chingonizer_freq_coarse_mode',
+						options: { mode: 'release' },
+					},
+				],
+				rotate_left: [
+					{
+						actionId: 'input_ushaping_chingonizer_knob_frequency',
+						options: { delta_fine: -10, delta_coarse: -50 },
+					},
+				],
+				rotate_right: [
+					{
+						actionId: 'input_ushaping_chingonizer_knob_frequency',
+						options: { delta_fine: 10, delta_coarse: 50 },
+					},
+				],
+			},
+		],
+		feedbacks: [],
+	}
+}
+
+function chingonizerSlopePreset(self) {
+	const inst = self.label || 'Galaxy'
+	return {
+		type: 'button',
+		category: 'Inputs/Chingonizer',
+		name: 'Chingonizer: Slope (Bands 1-4)',
+		style: {
+			text: `Chingonizer\nSlope (B1-4)\n$(${inst}:ushaping_current_slope)`,
+			size: '12',
+			color: 0xffffff,
+			bgcolor: 0x006622,
+			alignment: 'center:middle',
+		},
+		options: {
+			rotaryActions: true,
+			stepAutoProgress: false,
+		},
+		steps: [
+			{
+				down: [],
+				up: [],
+				rotate_left: [
+					{
+						actionId: 'input_ushaping_chingonizer_knob_slope',
+						options: { direction: 'down' },
+					},
+				],
+				rotate_right: [
+					{
+						actionId: 'input_ushaping_chingonizer_knob_slope',
+						options: { direction: 'up' },
+					},
+				],
+			},
+		],
+		feedbacks: [],
 	}
 }
 
@@ -1773,23 +1994,45 @@ function eqKnobPreset(self, param) {
 		},
 		steps: [
 			{
-				down: [
-					{
-						actionId: 'input_eq_knob_band_bypass',
-						options: {},
-					},
-				],
-				up: [],
+				down:
+					param === 'gain'
+						? [
+								{
+									actionId: 'input_eq_gain_coarse_mode',
+									options: { mode: 'press' },
+								},
+							]
+						: [
+								{
+									actionId: 'input_eq_knob_band_bypass',
+									options: {},
+								},
+							],
+				up:
+					param === 'gain'
+						? [
+								{
+									actionId: 'input_eq_gain_coarse_mode',
+									options: { mode: 'release' },
+								},
+							]
+						: [],
 				rotate_left: [
 					{
 						actionId: `input_eq_knob_${param}`,
-						options: { delta: -deltas[param] },
+						options:
+							param === 'gain'
+								? { delta_fine: -0.1, delta_coarse: -0.5 }
+								: { delta: -deltas[param] },
 					},
 				],
 				rotate_right: [
 					{
 						actionId: `input_eq_knob_${param}`,
-						options: { delta: deltas[param] },
+						options:
+							param === 'gain'
+								? { delta_fine: 0.1, delta_coarse: 0.5 }
+								: { delta: deltas[param] },
 					},
 				],
 			},
@@ -2029,23 +2272,45 @@ function ushapingOutputKnobPreset(self, param) {
 		},
 		steps: [
 			{
-				down: [
-					{
-						actionId: 'output_ushaping_knob_band_bypass',
-						options: {},
-					},
-				],
-				up: [],
+				down:
+					param === 'gain'
+						? [
+								{
+									actionId: 'output_ushaping_gain_coarse_mode',
+									options: { mode: 'press' },
+								},
+							]
+						: [
+								{
+									actionId: 'output_ushaping_knob_band_bypass',
+									options: {},
+								},
+							],
+				up:
+					param === 'gain'
+						? [
+								{
+									actionId: 'output_ushaping_gain_coarse_mode',
+									options: { mode: 'release' },
+								},
+							]
+						: [],
 				rotate_left: [
 					{
 						actionId: `output_ushaping_knob_${param}`,
-						options: param === 'slope' ? { delta: -1, direction: 'down' } : { delta: -deltas[param] },
+						options:
+							param === 'slope'
+								? { delta: -1, direction: 'down' }
+								: { delta_fine: -0.1, delta_coarse: -0.5 },
 					},
 				],
 				rotate_right: [
 					{
 						actionId: `output_ushaping_knob_${param}`,
-						options: param === 'slope' ? { delta: 1, direction: 'up' } : { delta: deltas[param] },
+						options:
+							param === 'slope'
+								? { delta: 1, direction: 'up' }
+								: { delta_fine: 0.1, delta_coarse: 0.5 },
 					},
 				],
 			},
@@ -2206,23 +2471,45 @@ function eqOutputKnobPreset(self, param) {
 		},
 		steps: [
 			{
-				down: [
-					{
-						actionId: 'output_eq_knob_band_bypass',
-						options: {},
-					},
-				],
-				up: [],
+				down:
+					param === 'gain'
+						? [
+								{
+									actionId: 'output_eq_gain_coarse_mode',
+									options: { mode: 'press' },
+								},
+							]
+						: [
+								{
+									actionId: 'output_eq_knob_band_bypass',
+									options: {},
+								},
+							],
+				up:
+					param === 'gain'
+						? [
+								{
+									actionId: 'output_eq_gain_coarse_mode',
+									options: { mode: 'release' },
+								},
+							]
+						: [],
 				rotate_left: [
 					{
 						actionId: `output_eq_knob_${param}`,
-						options: { delta: -deltas[param] },
+						options:
+							param === 'gain'
+								? { delta_fine: -0.1, delta_coarse: -0.5 }
+								: { delta: -deltas[param] },
 					},
 				],
 				rotate_right: [
 					{
 						actionId: `output_eq_knob_${param}`,
-						options: { delta: deltas[param] },
+						options:
+							param === 'gain'
+								? { delta_fine: 0.1, delta_coarse: 0.5 }
+								: { delta: deltas[param] },
 					},
 				],
 			},
@@ -2726,6 +3013,13 @@ module.exports = function UpdatePresets(self, NUM_INPUTS, NUM_OUTPUTS) {
 	addInput(ushapingKnobPreset(self, 'frequency'))
 	addInput(ushapingKnobPreset(self, 'slope'))
 	addInput(ushapingBandBypassKnobPreset(self))
+
+	addSection('Inputs', 'Chingonizer', 'Mirrored U-Shaping control (bands 1/5 gain, shared freq/slope for 1-4).')
+	for (let ch = 1; ch <= NUM_INPUTS; ch++) addInput(chingonizerInputSelectPreset(self, ch))
+	addInput(chingonizerSetupPreset(self))
+	addInput(chingonizerGainPreset(self))
+	addInput(chingonizerFrequencyPreset(self))
+	addInput(chingonizerSlopePreset(self))
 
 	addSection('Inputs', 'Parametric EQ', 'Select the input/band and modify gain, frequency, bandwidth, or bypass.')
 	for (let ch = 1; ch <= NUM_INPUTS; ch++) addInput(eqInputSelectPreset(self, ch))

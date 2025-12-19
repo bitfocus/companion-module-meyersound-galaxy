@@ -1,6 +1,6 @@
 // main.js
 const net = require('net')
-const { InstanceBase, runEntrypoint, InstanceStatus } = require('@companion-module/base')
+const { InstanceBase, runEntrypoint, InstanceStatus, Regex } = require('@companion-module/base')
 const UpdateActions = require('./actions')
 const UpdateFeedbacks = require('./feedbacks')
 const UpdateVariableDefinitions = require('./variables')
@@ -11,6 +11,14 @@ const { STARTING_POINTS_SOURCE, PRODUCT_INTEGRATION_DATA } = require('./actions-
 // Protocol constants
 const EOL_SPLIT = /\r\n|\n|\r/ // Line ending split pattern for incoming data
 const TX_EOL = '\n' // Line ending for outgoing commands
+const DEFAULT_PHYSICAL_PORT = 25003
+const VIRTUAL_BASE_PORT = 50503
+const VIRTUAL_PORT_STEP = 100
+const VIRTUAL_MIN_ID = 1
+const VIRTUAL_MAX_ID = 20
+const DEFAULT_VIRTUAL_HOST = '127.0.0.1'
+const ENTITY_NAME_PATH = '/entity/entity_name'
+const VIRTUAL_SCAN_INTERVAL_MS = 10000
 
 // Device channel counts (Galaxy 816 model)
 // NOTE: Different Galaxy models may have different channel counts:
@@ -294,6 +302,15 @@ class ModuleInstance extends InstanceBase {
 		// Parametric EQ state
 		this.inputEQ = {} // { ch: { bypass: bool, band: { gain, frequency, bandwidth, band_bypass } } }
 		this._eqKnobControl = { selectedInputs: [1], selectedBand: 1 }
+
+		// Virtual Galaxy discovery cache
+		this._virtualDevices = [] // [{ id, port, host, name, model }]
+		this._virtualScanTimer = null
+		this._virtualScanInterval = null
+		this._virtualScanInFlight = false
+		this._virtualDiscoveryEnabled = true
+		this._virtualWatchers = new Map() // key => { sock, host, port, buf }
+		this._virtualWatcherTimers = new Map()
 	}
 
 	async init(config) {
@@ -310,6 +327,8 @@ class ModuleInstance extends InstanceBase {
 		this._updateSpeakerTestVars()
 
 		this._startSubscribe()
+		this._virtualDiscoveryEnabled = true
+		this._startVirtualDiscoveryLoop()
 	}
 
 	async destroy() {
@@ -318,6 +337,8 @@ class ModuleInstance extends InstanceBase {
 		this._stopAllOutputFades()
 		this._stopOutputChase()
 		this._stopSpeakerFlashTimer()
+
+		this._disableVirtualDiscovery()
 
 		// ✅ FIX: Clean up all timers
 		clearTimeout(this._actionsRefreshTimer)
@@ -355,6 +376,8 @@ class ModuleInstance extends InstanceBase {
 		this._stopOutputChase()
 		this._stopSpeakerFlashTimer()
 
+		this._disableVirtualDiscovery()
+
 		// ✅ FIX: Clean up timers on config update
 		clearTimeout(this._actionsRefreshTimer)
 		this._actionsRefreshTimer = null
@@ -381,16 +404,37 @@ class ModuleInstance extends InstanceBase {
 		this._updateSpeakerTestVars()
 		this._logHistoryFetched = false
 		this.fanStatus = {}
+		this._virtualDiscoveryEnabled = true
+		this._startVirtualDiscoveryLoop()
 	}
 
 	// -------- Config UI --------
 	getConfigFields() {
+		const detectedVirtualChoices = (this._virtualDevices || []).map((v) => {
+			const label = v.name || v.model || 'Virtual Galaxy'
+			return { id: v.id, label }
+		})
+
+		let virtualIdChoices = detectedVirtualChoices
+		const currentVirtualId = this._clampVirtualId(this.config?.virtual_id)
+		if (
+			currentVirtualId !== null &&
+			virtualIdChoices.every((c) => Number(c.id) !== currentVirtualId)
+		) {
+			virtualIdChoices = [{ id: currentVirtualId, label: `Virtual Galaxy` }, ...virtualIdChoices]
+		}
+
 		return [
 			{
-				type: 'bonjour-device',
-				id: 'bonjour_host',
-				label: 'Device',
+				type: 'dropdown',
+				id: 'connection_type',
+				label: 'Connection Type',
 				width: 6,
+				default: 'physical',
+				choices: [
+					{ id: 'physical', label: 'Physical device' },
+					{ id: 'virtual', label: 'Virtual Galaxy' },
+				],
 			},
 			{
 				type: 'textinput',
@@ -398,19 +442,33 @@ class ModuleInstance extends InstanceBase {
 				label: 'Target IP / Hostname',
 				width: 8,
 				default: '192.168.0.100',
-				isVisible: (options) => !options.bonjour_host,
-				regex: this.REGEX_HOSTNAME,
+				tooltip: 'Supports IPv4, IPv6, or a hostname',
+				regex: Regex.SOMETHING,
+				isVisible: (options) => (options.connection_type ?? 'physical') === 'physical',
 			},
+			{
+				type: 'dropdown',
+				id: 'virtual_id',
+				label: 'Virtual Galaxy ID',
+				width: 6,
+				default: VIRTUAL_MIN_ID,
+				choices:
+					virtualIdChoices.length > 0
+						? virtualIdChoices
+						: [{ id: VIRTUAL_MIN_ID, label: 'No virtual devices detected' }],
+				isVisible: (options) => (options.connection_type ?? 'physical') === 'virtual',
+			},
+			// Hidden: we still store port but UI drives it from connection type
 			{
 				type: 'number',
 				id: 'port',
 				label: 'Port',
 				width: 4,
-				default: 25003,
+				default: DEFAULT_PHYSICAL_PORT,
 				min: 1,
 				max: 65535,
 				step: 1,
-				isVisible: (options) => !options.bonjour_host,
+				isVisible: () => false,
 			},
 		]
 	}
@@ -3967,46 +4025,332 @@ class ModuleInstance extends InstanceBase {
 		return null
 	}
 
-	// ---- Connection resolver (manual only) ----
-	// ✅ IMPROVED: Better validation
+	_disableVirtualDiscovery() {
+		this._virtualDiscoveryEnabled = false
+		clearTimeout(this._virtualScanTimer)
+		clearInterval(this._virtualScanInterval)
+		this._virtualScanTimer = null
+		this._virtualScanInterval = null
+		this._virtualScanInFlight = false
+		for (const [key, sock] of this._virtualWatchers.entries()) {
+			try {
+				sock.destroy()
+			} catch {}
+			this._virtualWatchers.delete(key)
+		}
+		for (const timer of this._virtualWatcherTimers.values()) {
+			clearTimeout(timer)
+		}
+		this._virtualWatcherTimers.clear()
+	}
+
+	_clampVirtualId(id) {
+		const n = Number(id)
+		if (!Number.isFinite(n)) return null
+		return Math.min(Math.max(n, VIRTUAL_MIN_ID), VIRTUAL_MAX_ID)
+	}
+
+	_virtualPortForId(id) {
+		const clamped = this._clampVirtualId(id)
+		if (clamped === null) return VIRTUAL_BASE_PORT
+		return VIRTUAL_BASE_PORT - (clamped - VIRTUAL_MIN_ID) * VIRTUAL_PORT_STEP
+	}
+
+	_syncVirtualWatchers(devices) {
+		const desiredKeys = new Set()
+		for (const dev of devices) {
+			const key = `${dev.host || DEFAULT_VIRTUAL_HOST}:${dev.port}`
+			desiredKeys.add(key)
+			if (!this._virtualWatchers.has(key)) {
+				this._startVirtualWatcher(dev)
+			}
+		}
+		// Remove watchers no longer needed
+		for (const key of Array.from(this._virtualWatchers.keys())) {
+			if (!desiredKeys.has(key)) {
+				const sock = this._virtualWatchers.get(key)
+				try {
+					sock.destroy()
+				} catch {}
+				this._virtualWatchers.delete(key)
+			}
+		}
+	}
+
+	_startVirtualWatcher(dev) {
+		const key = `${dev.host || DEFAULT_VIRTUAL_HOST}:${dev.port}`
+		const sock = new net.Socket()
+		this._virtualWatchers.set(key, sock)
+		let buf = ''
+
+		const cleanup = () => {
+			try {
+				sock.destroy()
+			} catch {}
+			this._virtualWatchers.delete(key)
+		}
+
+		const scheduleReconnect = () => {
+			if (this._virtualWatcherTimers.has(key)) return
+			const timer = setTimeout(() => {
+				this._virtualWatcherTimers.delete(key)
+				this._startVirtualWatcher(dev)
+			}, 2000)
+			this._virtualWatcherTimers.set(key, timer)
+		}
+
+		sock.setTimeout(2000, () => {
+			cleanup()
+			scheduleReconnect()
+		})
+		sock.on('error', () => {
+			cleanup()
+			scheduleReconnect()
+		})
+		sock.on('close', () => {
+			cleanup()
+			scheduleReconnect()
+		})
+
+		sock.on('data', (chunk) => {
+			buf += chunk.toString('utf8')
+			const parts = buf.split(EOL_SPLIT)
+			buf = parts.pop() ?? ''
+			for (const raw of parts) {
+				const line = raw.trim()
+				if (!line || line.includes('#error')) continue
+				if (line.includes(ENTITY_NAME_PATH)) {
+					const name = this._extractRightHandValue(line) || null
+					this._updateVirtualDeviceName(dev.port, name)
+				} else if (line.includes(MODEL_STRING_PATH)) {
+					const model = this._extractRightHandValue(line) || null
+					this._updateVirtualDeviceModel(dev.port, model)
+				}
+			}
+		})
+
+		try {
+			sock.connect(dev.port, dev.host || DEFAULT_VIRTUAL_HOST, () => {
+				try {
+					sock.write(
+						Buffer.from(
+							`+${ENTITY_NAME_PATH}${TX_EOL}+${MODEL_STRING_PATH}${TX_EOL}`,
+							'utf8',
+						),
+					)
+				} catch {}
+			})
+		} catch {
+			cleanup()
+			scheduleReconnect()
+		}
+	}
+
+	_updateVirtualDeviceName(port, name) {
+		let changed = false
+		for (const dev of this._virtualDevices) {
+			if (dev.port === port) {
+				if (dev.name !== name && name) {
+					dev.name = name
+					changed = true
+				}
+			}
+		}
+		if (changed) {
+			// no-op trigger; config fields re-render when reopened
+			this._virtualDevices = [...this._virtualDevices]
+		}
+	}
+
+	_updateVirtualDeviceModel(port, model) {
+		let changed = false
+		for (const dev of this._virtualDevices) {
+			if (dev.port === port) {
+				if (dev.model !== model && model) {
+					dev.model = model
+					changed = true
+				}
+			}
+		}
+		if (changed) {
+			this._virtualDevices = [...this._virtualDevices]
+		}
+	}
+
+	_startVirtualDiscoveryLoop() {
+		if (!this._virtualDiscoveryEnabled) return
+		this._disableVirtualDiscovery()
+		this._virtualDiscoveryEnabled = true
+		// Immediate scan
+		this._runVirtualDiscovery().catch((err) => {
+			this.log?.('debug', `Virtual discovery failed: ${err?.message || err}`)
+		})
+		// Periodic scans
+		this._virtualScanInterval = setInterval(() => {
+			this._runVirtualDiscovery().catch((err) => {
+				this.log?.('debug', `Virtual discovery failed: ${err?.message || err}`)
+			})
+		}, VIRTUAL_SCAN_INTERVAL_MS)
+	}
+
+	async _runVirtualDiscovery() {
+		if (!this._virtualDiscoveryEnabled || this._virtualScanInFlight) return
+		this._virtualScanInFlight = true
+		try {
+			const devices = await this._detectVirtualDevices()
+			this._virtualDevices = devices
+			this._syncVirtualWatchers(devices)
+		} catch (err) {
+			this.log?.('debug', `Virtual discovery failed: ${err?.message || err}`)
+		} finally {
+			this._virtualScanInFlight = false
+		}
+	}
+
+	async _detectVirtualDevices() {
+		const probes = []
+		for (let id = VIRTUAL_MIN_ID; id <= VIRTUAL_MAX_ID; id++) {
+			probes.push(this._probeVirtualId(id))
+		}
+		const results = await Promise.all(probes)
+		const filtered = results.filter((r) => !!r)
+		const uniqueById = []
+		const seen = new Set()
+		for (const dev of filtered) {
+			if (seen.has(dev.id)) continue
+			seen.add(dev.id)
+			uniqueById.push(dev)
+		}
+		return uniqueById
+	}
+
+	async _probeVirtualId(id) {
+		const port = this._virtualPortForId(id)
+		const hosts = [DEFAULT_VIRTUAL_HOST, '::1', 'localhost']
+
+		for (const host of hosts) {
+			const res = await this._probeVirtualHostPort(host, port, id)
+			if (res) return res
+		}
+		return null
+	}
+
+	_probeVirtualHostPort(host, port, id) {
+		return new Promise((resolve) => {
+			const sock = new net.Socket()
+			let resolved = false
+			let fallbackTimer = null
+			let lastResult = null
+
+			const cleanup = (result) => {
+				if (resolved) return
+				resolved = true
+				clearTimeout(fallbackTimer)
+				try {
+					sock.destroy()
+				} catch {}
+				resolve(result ?? lastResult ?? null)
+			}
+
+			sock.setTimeout(600, () => cleanup(null))
+			sock.on('error', () => cleanup(null))
+			sock.on('close', () => cleanup(null))
+
+			let buf = ''
+			sock.on('data', (chunk) => {
+				buf += chunk.toString('utf8')
+				const parts = buf.split(EOL_SPLIT)
+				buf = parts.pop() ?? ''
+				for (const raw of parts) {
+					const line = raw.trim()
+					if (!line || line.includes('#error')) continue
+					if (line.includes(ENTITY_NAME_PATH)) {
+						const name = this._extractRightHandValue(line) || null
+						lastResult = { id, port, host, name, model: lastResult?.model ?? null }
+						cleanup(lastResult)
+						return
+					} else if (line.includes(MODEL_STRING_PATH)) {
+						const model = this._extractRightHandValue(line) || null
+						lastResult = { id, port, host, name: lastResult?.name ?? null, model }
+					}
+				}
+			})
+
+			sock.connect(port, host, () => {
+				fallbackTimer = setTimeout(() => cleanup(lastResult), 200)
+				try {
+					sock.write(
+						Buffer.from(
+							`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}+${MODEL_STRING_PATH}${TX_EOL}${MODEL_STRING_PATH}${TX_EOL}`,
+							'utf8',
+						),
+					)
+				} catch {
+					// ignore
+				}
+			})
+		})
+	}
+
+	// ---- Connection resolver (physical + virtual) ----
 	_resolveHostPortFromConfig() {
-		// Check if Bonjour device is selected (format: "IP:PORT" or "[IPv6]:PORT")
-		if (this.config?.bonjour_host) {
-			const bonjourHost = this.config.bonjour_host.trim()
-			let host, port
+		const connectionType = this.config?.connection_type || 'physical'
 
-			// IPv6 format: [address]:port
-			if (bonjourHost.startsWith('[')) {
-				const match = bonjourHost.match(/^\[([^\]]+)\]:(\d+)$/)
-				if (match) {
-					host = match[1]
-					port = Number(match[2])
-				}
-			} else {
-				// IPv4 format: address:port
-				// Split from the right to get the last colon (port separator)
-				const lastColonIndex = bonjourHost.lastIndexOf(':')
-				if (lastColonIndex !== -1) {
-					host = bonjourHost.substring(0, lastColonIndex).trim()
-					port = Number(bonjourHost.substring(lastColonIndex + 1))
-				}
+		if (connectionType === 'virtual') {
+			let host =
+				typeof this.config?.virtual_host === 'string' && this.config.virtual_host.trim() !== ''
+					? this.config.virtual_host.trim()
+					: DEFAULT_VIRTUAL_HOST
+			if (host.startsWith('[') && host.endsWith(']')) {
+				host = host.slice(1, -1).trim()
 			}
 
-			if (host && Number.isFinite(port) && port >= 1 && port <= 65535) {
-				return { host, port }
-			}
+			const virtualId = this._clampVirtualId(this.config?.virtual_id) ?? VIRTUAL_MIN_ID
+			const port = this._virtualPortForId(virtualId)
+
+			return { host, port }
 		}
 
-		// Fall back to manual host/port
-		const host = this.config?.host
-		if (!host || typeof host !== 'string' || host.trim() === '') {
+		const rawHost = this.config?.host
+		if (!rawHost || typeof rawHost !== 'string' || rawHost.trim() === '') {
 			return { host: null, port: null }
 		}
-		const port = Number(this.config?.port)
+
+		let host = rawHost.trim()
+		let port = Number(this.config?.port)
+		if (!Number.isFinite(port)) {
+			port = DEFAULT_PHYSICAL_PORT
+		}
+
+		// Allow IPv6 literals with brackets and host fields that include a port
+		if (host.startsWith('[')) {
+			const match = host.match(/^\[([^\]]+)\]:(\d+)$/)
+			if (match) {
+				host = match[1].trim()
+				port = Number(match[2])
+			} else if (host.endsWith(']')) {
+				host = host.slice(1, -1).trim()
+			}
+		} else {
+			const firstColon = host.indexOf(':')
+			const lastColon = host.lastIndexOf(':')
+			// If there is exactly one colon, treat it as a host:port separator (IPv4/hostname)
+			if (firstColon === lastColon && firstColon > 0) {
+				const maybePort = Number(host.substring(lastColon + 1))
+				if (Number.isFinite(maybePort)) {
+					port = maybePort
+					host = host.substring(0, lastColon).trim()
+				}
+			}
+		}
+
+		if (!host) {
+			return { host: null, port: null }
+		}
 		if (!Number.isFinite(port) || port < 1 || port > 65535) {
-			return { host: null, port: null }
+			port = DEFAULT_PHYSICAL_PORT
 		}
-		return { host: host.trim(), port }
+		return { host, port }
 	}
 }
 

@@ -417,6 +417,43 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
+	actions['output_ushaping_gain_coarse_mode'] = {
+		name: 'Output: U-Shaping Gain Coarse Mode',
+		description: 'Use with the U-Shaping gain knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'U-Shaping coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressState) self._rotaryPressState = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressState[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressState[key]
+			} else {
+				self._rotaryPressState[key] = !self._rotaryPressState[key]
+				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
+			}
+		},
+	}
+
 	actions['output_ushaping_bypass'] = {
 		name: 'Output: U-Shaping Bypass',
 		options: [
@@ -478,7 +515,8 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 	actions['output_ushaping_knob_gain'] = {
 		name: 'Output: U-Shaping Knob - Gain',
-		description: 'Adjust gain for the selected output(s) and band. Acceleration (3 tiers): 0.1 → 0.3 → 0.5 dB.',
+		description:
+			'Adjust gain for the selected output(s) and band. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action.',
 		options: [
 			{
 				type: 'static-text',
@@ -488,8 +526,17 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			},
 			{
 				type: 'number',
-				id: 'delta',
-				label: 'Gain delta (dB) - for button press',
+				id: 'delta_fine',
+				label: 'Gain delta fine (dB)',
+				default: 0.1,
+				min: -15,
+				max: 15,
+				step: 0.1,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Gain delta coarse (dB)',
 				default: 0.5,
 				min: -15,
 				max: 15,
@@ -501,30 +548,17 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 			const chs = self?._ushapingKnobControlOutput?.selectedOutputs || [1]
 			const band = self?._ushapingKnobControlOutput?.selectedBand || 1
-			let delta = Number(e.options.delta ?? 0)
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self?._rotaryPressState?.[key]
 
-			// Time-based acceleration for rotary encoders
-			if (e.surfaceId !== undefined) {
-				const now = Date.now()
-				const accelKey = `ushaping_gain_${e.surfaceId || 'default'}`
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 0.5 : 0.1
 
-				if (!self._rotaryAccel) self._rotaryAccel = {}
-
-				const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
-				const timeDiff = now - lastRotation.time
-
-				// 4-tier acceleration based on rotation speed
-				let speedTier = 0
-				if (timeDiff < 100) {
-					speedTier = Math.min(lastRotation.count + 1, 3)
-				}
-
-				self._rotaryAccel[accelKey] = { time: now, count: speedTier }
-
-				// Acceleration tiers: 0 = 0.1dB, 1 = 0.5dB, 2 = 1dB, 3 = 2dB (faster)
-				const deltaTiers = [0.1, 0.5, 1.0, 2.0]
-				delta = deltaTiers[speedTier] * (delta >= 0 ? 1 : -1)
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
 			}
+			const delta = Math.abs(base) * sign
 
 			// Initialize storage if needed
 			if (!self.outputUShaping) self.outputUShaping = {}
@@ -555,9 +589,10 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 				const outputName = self?.outputName?.[ch] ? ` (${self.outputName[ch]})` : ''
 				const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
 				self.log?.(
 					'info',
-					`U-Shaping: Output ${ch}${outputName} Band ${band} gain ${currentValue.toFixed(1)} ${deltaStr} = ${finalValue.toFixed(1)} dB`,
+					`U-Shaping (${modeLabel}): Output ${ch}${outputName} Band ${band} gain ${currentValue.toFixed(1)} ${deltaStr} = ${finalValue.toFixed(1)} dB`,
 				)
 			}
 
@@ -987,18 +1022,64 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
+	actions['output_eq_gain_coarse_mode'] = {
+		name: 'Output: Parametric EQ Gain Coarse Mode',
+		description: 'Use with the output PEQ gain knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'Output PEQ coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressState) self._rotaryPressState = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressState[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressState[key]
+			} else {
+				self._rotaryPressState[key] = !self._rotaryPressState[key]
+				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
+			}
+		},
+	}
+
 	// Parametric EQ - Knob Actions
 
 	actions['output_eq_knob_gain'] = {
 		name: 'Output: Parametric EQ Knob - Gain',
 		description:
-			'Adjust gain for the selected output(s) and band. Range: -18 to +18 dB. Acceleration (3 tiers): 0.1 → 0.5 → 1 dB.',
+			'Adjust gain for the selected output(s) and band. Range: -18 to +18 dB. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action.',
 		options: [
 			{
 				type: 'number',
-				id: 'delta',
-				label: 'Delta (dB) - for button press',
+				id: 'delta_fine',
+				label: 'Gain delta fine (dB)',
 				default: 0.1,
+				min: -18,
+				max: 18,
+				step: 0.1,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Gain delta coarse (dB)',
+				default: 0.5,
 				min: -18,
 				max: 18,
 				step: 0.1,
@@ -1007,30 +1088,17 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		callback: (e) => {
 			const chs = self?._eqKnobControlOutput?.selectedOutputs || [1]
 			const band = self?._eqKnobControlOutput?.selectedBand || 1
-			let delta = Number(e.options.delta ?? 0)
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self?._rotaryPressState?.[key]
 
-			// Time-based acceleration for rotary encoders
-			if (e.surfaceId !== undefined) {
-				const now = Date.now()
-				const accelKey = `eq_gain_${e.surfaceId || 'default'}`
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 0.5 : 0.1
 
-				if (!self._rotaryAccel) self._rotaryAccel = {}
-
-				const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
-				const timeDiff = now - lastRotation.time
-
-				// 4-tier acceleration based on rotation speed
-				let speedTier = 0
-				if (timeDiff < 100) {
-					speedTier = Math.min(lastRotation.count + 1, 3)
-				}
-
-				self._rotaryAccel[accelKey] = { time: now, count: speedTier }
-
-				// Acceleration tiers: 0 = 0.1dB, 1 = 0.5dB, 2 = 1dB, 3 = 2dB (faster)
-				const deltaTiers = [0.1, 0.5, 1.0, 2.0]
-				delta = deltaTiers[speedTier] * (delta >= 0 ? 1 : -1)
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
 			}
+			const delta = Math.abs(base) * sign
 
 			if (!self.outputEQ) self.outputEQ = {}
 
@@ -1058,9 +1126,11 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				}
 
 				const outputName = self?.outputName?.[ch] ? ` (${self.outputName[ch]})` : ''
+				const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
 				self.log?.(
 					'info',
-					`Parametric EQ: Output ${ch}${outputName} Band ${band} gain ${currentValue.toFixed(1)} + ${delta.toFixed(1)} = ${finalValue.toFixed(1)} dB`,
+					`Parametric EQ (${modeLabel}): Output ${ch}${outputName} Band ${band} gain ${currentValue.toFixed(1)} ${deltaStr} = ${finalValue.toFixed(1)} dB`,
 				)
 			}
 
