@@ -9,6 +9,8 @@ jobs:
 
     if: ${{ !contains(github.repository, 'companion-module-template-') }}
 
+    runs-on: ubuntu-latest
+
     env:
       YARN_ENABLE_IMMUTABLE_INSTALLS: "false"
       YARN_ENABLE_IMMUTABLE_CACHE: "false"
@@ -16,6 +18,142 @@ jobs:
     permissions:
       packages: read
 
-    uses: bitfocus/actions/.github/workflows/module-checks.yaml@main
-    # with:
-    #   upload-artifact: true # uncomment this to upload the built package as an artifact to this workflow that you can download and share with others
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Determine nodejs version
+        id: determine-nodejs
+        run: |
+          NODE_VERSION=$(jq '.runtime.type' companion/manifest.json)
+          echo "Node.js version: $NODE_VERSION"
+
+          if [ "$NODE_VERSION" == "\"node18\"" ]; then
+            echo "Using Node.js 18.x"
+            echo "version=18.x" >> $GITHUB_OUTPUT
+          elif [ "$NODE_VERSION" == "\"node22\"" ]; then
+            echo "Using Node.js 22.x"
+            echo "version=22.x" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Use Node.js ${{ steps.determine-nodejs.outputs.version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.determine-nodejs.outputs.version }}
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Collect info
+        id: collect-info
+        run: |
+          MODULE_NAME="${GITHUB_REPOSITORY#*/}" # remove the owner from the repository name
+
+          # determine the type, to be either connection (module) or surface
+          if [[ "$MODULE_NAME" == companion-module-* ]]; then
+            MODULE_TYPE="module"
+          elif [[ "$MODULE_NAME" == companion-surface-* ]]; then
+            MODULE_TYPE="surface"
+          else
+            echo "Unknown repository name format: $MODULE_NAME. Repository name must start with companion-module- or companion-surface-"
+            exit 99
+          fi
+
+          MODULE_NAME=${MODULE_NAME#companion-module-} # remove the companion-module- prefix
+          MODULE_NAME=${MODULE_NAME#companion-surface-} # remove the companion-surface- prefix
+
+          echo "module-name=$MODULE_NAME" >> $GITHUB_OUTPUT
+          echo "module-type=$MODULE_TYPE" >> $GITHUB_OUTPUT
+
+          MANIFEST_ID=$(jq '.["id"]' companion/manifest.json)
+          if [ ! "$MANIFEST_ID" == "\"${MODULE_NAME}\"" ]; then
+            echo "Module manifest.json id does not match github repository name"
+            exit 99
+          fi
+
+          IS_BUILDING_VERSION=""
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then 
+            IS_BUILDING_VERSION="${GITHUB_REF}"
+            IS_BUILDING_VERSION="\"${IS_BUILDING_VERSION#refs/tags/}\""
+          fi
+
+          if [ "$IS_BUILDING_VERSION" != "" ]; then
+            PACKAGE_VERSION=$(jq '.["version"]' package.json)
+            PACKAGE_VERSION_V=$(jq '"v"+ .["version"]' package.json)
+            if [ ! "$PACKAGE_VERSION_V" == "${IS_BUILDING_VERSION}" ] && [ ! "$PACKAGE_VERSION" == "${IS_BUILDING_VERSION}" ]; then
+              echo "Module package.json version does not match git ref"
+              exit 99
+            fi
+          fi
+
+          if grep -q "your-module-name" "companion/manifest.json"; then
+            echo "Module manifest contains references to your-module-name!"
+            exit 99
+          fi
+
+          if ! jq -e '.products | arrays and length > 0' companion/manifest.json > /dev/null; then
+            echo "Module manifest product list is either empty or does not exist"
+            exit 99
+          fi
+
+          if [[ "${GITHUB_REPOSITORY}" == companion-module-* ]] || [[ "${GITHUB_REPOSITORY}" == companion-surface-* ]]; then
+            # only run this check when in modules
+            if ! jq -e '.runtime.apiVersion === "0.0.0"' companion/manifest.json > /dev/null; then
+              echo "Module manifest should have default 0.0.0 runtime.apiVersion"
+              exit 99
+            fi
+          fi
+
+          if [ ! -f companion/HELP.md ]; then
+            echo "Module help file companion/HELP.md does not exist"
+            exit 99
+          fi
+
+      - name: Setup Github packages auth
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
+
+      - name: Prepare module
+        run: |
+          yarn install
+
+          # Some modules have a build script, but many do not
+          if jq -e '.scripts.build' package.json > /dev/null; then 
+            yarn run build
+          fi
+
+      - name: Package module
+        id: package
+        run: |
+          EXTRA_ARGS=""
+
+          if [ "${{ steps.collect-info.outputs.module-type }}" == "surface" ]; then
+            yarn companion-surface-build --output=pkg $EXTRA_ARGS
+          elif [ "${{ steps.collect-info.outputs.module-type }}" == "module" ]; then
+            yarn companion-module-build --output=pkg $EXTRA_ARGS
+          else
+            echo "Unknown module type '${{ steps.collect-info.outputs.module-type }}'"
+            exit 99
+          fi
+
+      - name: Check module launches
+        timeout-minutes: 1
+        # This isn't a nice check, and doesn't give a clean output, but hopefully this is enough to catch some issues
+        # note: this must be done after the artifact upload, to ensure it doesn't accidentally mangle the package
+        run: |
+          set +e # disable errexit so we can capture node's non-zero exit without aborting the step
+
+          RESULT=$(node pkg/main.js 2>&1)
+          CODE=$?
+          if [ $CODE -eq 0 ]; then
+            echo "Module launched successfully"
+          elif echo "$RESULT" | grep -q "Failed to startup module"; then
+            # This means it is a connection, and the entrypoint was the cause of the exit
+            echo "Module launched successfully"
+          else
+            echo "Module failed to launch:"
+            echo "$RESULT"
+            exit 99
+          fi
