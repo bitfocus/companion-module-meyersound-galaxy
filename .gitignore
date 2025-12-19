@@ -4,6 +4,4 @@ package-lock.json
 /*.tgz
 DEBUG-*
 /.yarn
-!/.yarn/
-!/.yarn/install-state.gz
 .DS_Store
