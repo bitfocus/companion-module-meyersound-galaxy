@@ -1,9 +1,9 @@
 {
-	"id": "meyersound-galaxy",
+	"id": "companion-module-meyersound-galaxy",
 	"name": "Meyer Sound Galaxy",
 	"shortname": "Galaxy",
 	"description": "Control a Meyer Sound Galaxy device via TCP",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"license": "MIT",
 	"repository": "git+https://github.com/bitfocus/companion-module-meyersound-galaxy.git",
 	"bugs": "https://github.com/bitfocus/companion-module-meyersound-galaxy/issues",
