@@ -3,7 +3,7 @@
 	"name": "Meyer Sound Galaxy",
 	"shortname": "Galaxy",
 	"description": "Control a Meyer Sound Galaxy device via TCP",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"license": "MIT",
 	"repository": "git+https://github.com/bitfocus/companion-module-meyersound-galaxy.git",
 	"bugs": "https://github.com/bitfocus/companion-module-meyersound-galaxy/issues",
@@ -22,7 +22,7 @@
 	"legacyIds": [],
 	"manufacturer": "Meyer Sound",
 	"products": ["Galaxy"],
-	"keywords": [],
+	"keywords": ["meyersound", "audio", "galaxy", "DSP"],
 	"bonjourQueries": {
 		"bonjour_host": {
 			"type": "_galaxy._tcp",
