@@ -66,6 +66,19 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 	const gradientStartingPointOptionDefs_Front = PRODUCT_INTEGRATION_DATA.gradientStartingPointOptionDefs_Front || []
 	const gradientStartingPointOptionDefs_Reversed = PRODUCT_INTEGRATION_DATA.gradientStartingPointOptionDefs_Reversed || []
 
+	/**
+	 * Generate output link group choices with names
+	 */
+	const getOutputLinkGroupChoices = () => {
+		const choices = [{ id: '0', label: 'None (Unassigned)' }]
+		for (let group = 1; group <= 8; group++) {
+			const name = self?.outputLinkGroupName?.[group]
+			const label = name && name.trim() !== '' ? `Link Group ${group} (${name})` : `Link Group ${group}`
+			choices.push({ id: String(group), label })
+		}
+		return choices
+	}
+
 	const productIntegrationSpeakers = PRODUCT_INTEGRATION_DATA.speakers || new Map()
 	const productIntegrationStartingPoints = PRODUCT_INTEGRATION_DATA.startingPoints || new Map()
 	const endfireSpeakerStartingPointOption = PRODUCT_INTEGRATION_DATA.endfireSpeakerStartingPointOption || new Map()
@@ -248,17 +261,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				id: 'endfire_link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
-				choices: [
-					{ id: '0', label: 'None (Unassigned)' },
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
+				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'endfire',
 			},
 			{
@@ -365,17 +368,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				id: 'array_link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
-				choices: [
-					{ id: '0', label: 'None (Unassigned)' },
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
+				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'array',
 			},
 			{
@@ -559,17 +552,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				id: 'arrayendfire_link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
-				choices: [
-					{ id: '0', label: 'None (Unassigned)' },
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
+				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			{
@@ -621,17 +604,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				id: 'gradient_link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
-				choices: [
-					{ id: '0', label: 'None (Unassigned)' },
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
+				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'gradient',
 			},
 			{

@@ -20,6 +20,32 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		return ctrl ? `${surf}::${ctrl}` : null
 	}
 
+	/**
+	 * Generate output link group choices with names (for assignment)
+	 */
+	const getOutputLinkGroupChoicesAssign = () => {
+		const choices = [{ id: '0', label: 'Unassign' }]
+		for (let group = 1; group <= 8; group++) {
+			const name = self?.outputLinkGroupName?.[group]
+			const label = name && name.trim() !== '' ? `Link Group ${group} (${name})` : `Link Group ${group}`
+			choices.push({ id: String(group), label })
+		}
+		return choices
+	}
+
+	/**
+	 * Generate output link group choices with names (for bypass - no unassign option)
+	 */
+	const getOutputLinkGroupChoicesBypass = () => {
+		const choices = []
+		for (let group = 1; group <= 8; group++) {
+			const name = self?.outputLinkGroupName?.[group]
+			const label = name && name.trim() !== '' ? `Link Group ${group} (${name})` : `Link Group ${group}`
+			choices.push({ id: String(group), label })
+		}
+		return choices
+	}
+
 	// =========================
 	// ===== MUTES & SOLO ======
 	// =========================
@@ -183,16 +209,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'groups',
 				label: 'Link Group(s)',
 				default: [],
-				choices: [
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
+				choices: getOutputLinkGroupChoicesBypass(),
 				minSelection: 0,
 			},
 		],
@@ -252,17 +269,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'link_group',
 				label: 'Link Group',
 				default: '0',
-				choices: [
-					{ id: '0', label: 'Unassign' },
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
+				choices: getOutputLinkGroupChoicesAssign(),
 			},
 		],
 		callback: (e) => {

@@ -20,6 +20,32 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		return ctrl ? `${surf}::${ctrl}` : null
 	}
 
+	/**
+	 * Generate input link group choices with names (for assignment)
+	 */
+	const getInputLinkGroupChoicesAssign = () => {
+		const choices = [{ id: '0', label: 'Unassign' }]
+		for (let group = 1; group <= 4; group++) {
+			const name = self?.inputLinkGroupName?.[group]
+			const label = name && name.trim() !== '' ? `Link Group ${group} (${name})` : `Link Group ${group}`
+			choices.push({ id: String(group), label })
+		}
+		return choices
+	}
+
+	/**
+	 * Generate input link group choices with names (for bypass - no unassign option)
+	 */
+	const getInputLinkGroupChoicesBypass = () => {
+		const choices = []
+		for (let group = 1; group <= 4; group++) {
+			const name = self?.inputLinkGroupName?.[group]
+			const label = name && name.trim() !== '' ? `Link Group ${group} (${name})` : `Link Group ${group}`
+			choices.push({ id: String(group), label })
+		}
+		return choices
+	}
+
 	// =========================
 	// ======= MUTES ===========
 	// =========================
@@ -494,12 +520,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'groups',
 				label: 'Link Group(s)',
 				default: [],
-				choices: [
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-				],
+				choices: getInputLinkGroupChoicesBypass(),
 				minSelection: 0,
 			},
 		],
@@ -559,13 +580,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'link_group',
 				label: 'Link Group',
 				default: '0',
-				choices: [
-					{ id: '0', label: 'Unassign' },
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-				],
+				choices: getInputLinkGroupChoicesAssign(),
 			},
 		],
 		callback: (e) => {
