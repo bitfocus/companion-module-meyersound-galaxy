@@ -1070,6 +1070,43 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
+	actions['output_eq_bandwidth_coarse_mode'] = {
+		name: 'Output: Parametric EQ Bandwidth Coarse Mode',
+		description: 'Use with the output PEQ bandwidth knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'Output PEQ bandwidth coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressStateBW) self._rotaryPressStateBW = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressStateBW[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressStateBW[key]
+			} else {
+				self._rotaryPressStateBW[key] = !self._rotaryPressStateBW[key]
+				if (!self._rotaryPressStateBW[key]) delete self._rotaryPressStateBW[key]
+			}
+		},
+	}
+
 	// Parametric EQ - Knob Actions
 
 	actions['output_eq_knob_gain'] = {
@@ -1246,13 +1283,22 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	actions['output_eq_knob_bandwidth'] = {
 		name: 'Output: Parametric EQ Knob - Bandwidth (Q)',
 		description:
-			'Adjust bandwidth/Q for the selected output(s) and band. Range: 0.1 to 2. Acceleration (3 tiers): 0.01 → 0.05 → 0.1 (precise).',
+			'Adjust bandwidth/Q for the selected output(s) and band. Range: 0.1 to 2. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action.',
 		options: [
 			{
 				type: 'number',
-				id: 'delta',
-				label: 'Delta - for button press',
+				id: 'delta_fine',
+				label: 'Bandwidth delta fine',
 				default: 0.01,
+				min: -2,
+				max: 2,
+				step: 0.01,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Bandwidth delta coarse',
+				default: 0.1,
 				min: -2,
 				max: 2,
 				step: 0.01,
@@ -1261,30 +1307,17 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		callback: (e) => {
 			const chs = self?._eqKnobControlOutput?.selectedOutputs || [1]
 			const band = self?._eqKnobControlOutput?.selectedBand || 1
-			let delta = Number(e.options.delta ?? 0)
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self?._rotaryPressStateBW?.[key]
 
-			// Time-based acceleration for rotary encoders
-			if (e.surfaceId !== undefined) {
-				const now = Date.now()
-				const accelKey = `eq_bw_${e.surfaceId || 'default'}`
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 0.1 : 0.01
 
-				if (!self._rotaryAccel) self._rotaryAccel = {}
-
-				const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
-				const timeDiff = now - lastRotation.time
-
-				// 4-tier acceleration based on rotation speed
-				let speedTier = 0
-				if (timeDiff < 100) {
-					speedTier = Math.min(lastRotation.count + 1, 3)
-				}
-
-				self._rotaryAccel[accelKey] = { time: now, count: speedTier }
-
-				// Acceleration tiers: 0 = 0.01, 1 = 0.05, 2 = 0.1, 3 = 0.2 (more precise)
-				const deltaTiers = [0.01, 0.05, 0.1, 0.2]
-				delta = deltaTiers[speedTier] * (delta >= 0 ? 1 : -1)
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
 			}
+			const delta = Math.abs(base) * sign
 
 			if (!self.outputEQ) self.outputEQ = {}
 
@@ -1312,9 +1345,11 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				}
 
 				const outputName = self?.outputName?.[ch] ? ` (${self.outputName[ch]})` : ''
+				const deltaStr = delta >= 0 ? `+${delta.toFixed(2)}` : delta.toFixed(2)
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
 				self.log?.(
 					'info',
-					`Parametric EQ: Output ${ch}${outputName} Band ${band} bandwidth ${currentValue.toFixed(1)} + ${delta.toFixed(1)} = ${finalValue.toFixed(1)}`,
+					`Parametric EQ (${modeLabel}): Output ${ch}${outputName} Band ${band} bandwidth ${currentValue.toFixed(2)} ${deltaStr} = ${finalValue.toFixed(2)}`,
 				)
 			}
 
