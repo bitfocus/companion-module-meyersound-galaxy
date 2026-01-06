@@ -164,84 +164,12 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 	// NOTE: Outputs support 8 link groups (1-8)
 
-	actions['output_link_group_bypass'] = {
-		name: 'Output: Link Group Bypass',
-		options: [
-			{
-				type: 'dropdown',
-				id: 'operation',
-				label: 'Operation',
-				default: 'toggle',
-				choices: [
-					{ id: 'on', label: 'Bypass ON' },
-					{ id: 'off', label: 'Bypass OFF' },
-					{ id: 'toggle', label: 'Toggle' },
-				],
-			},
-			{
-				type: 'multidropdown',
-				id: 'groups',
-				label: 'Link Group(s)',
-				default: [],
-				choices: [
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
-				minSelection: 0,
-			},
-		],
-		callback: (e) => {
-			if (!self) return
-			const op = e.options.operation
-			const groups = Array.isArray(e.options.groups)
-				? e.options.groups.map((g) => Number(g)).filter((g) => g >= 1 && g <= 8)
-				: []
-
-			if (groups.length === 0) {
-				self.log?.('warn', 'No valid output link groups selected')
-				return
-			}
-
-			for (const group of groups) {
-				const currentBypass = self?.outputLinkGroupBypass?.[group]
-				let targetBypass = false
-
-				if (op === 'on') {
-					targetBypass = true
-				} else if (op === 'off') {
-					targetBypass = false
-				} else {
-					targetBypass = currentBypass !== true
-				}
-
-				const value = targetBypass ? 'true' : 'false'
-				self._cmdSendLine(`/device/output_link_group/${group}/bypass='${value}'`)
-
-				// Update local state
-				if (!self.outputLinkGroupBypass) self.outputLinkGroupBypass = {}
-				self.outputLinkGroupBypass[group] = targetBypass
-
-				self.log?.('info', `Output Link Group ${group} bypass: ${value}`)
-			}
-
-			if (typeof self.checkFeedbacks === 'function') {
-				self.checkFeedbacks('output_link_group_bypassed')
-			}
-		},
-	}
-
-	actions['output_link_group_assign'] = {
-		name: 'Output: Assign to Link Group',
+	actions['output_link_group'] = {
+		name: 'Output: Link Group',
 		options: [
 			{
 				type: 'multidropdown',
-				id: 'chs',
+				id: 'channels',
 				label: 'Output Channel(s)',
 				default: [],
 				choices: outputChoicesFriendly,
@@ -251,7 +179,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				type: 'dropdown',
 				id: 'link_group',
 				label: 'Link Group',
-				default: '0',
+				default: '1',
 				choices: [
 					{ id: '0', label: 'Unassign' },
 					{ id: '1', label: 'Link Group 1' },
@@ -264,29 +192,75 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '8', label: 'Link Group 8' },
 				],
 			},
+			{
+				type: 'dropdown',
+				id: 'bypass',
+				label: 'Status',
+				default: 'no_change',
+				choices: [
+					{ id: 'no_change', label: 'No Change' },
+					{ id: 'off', label: 'Enabled' },
+					{ id: 'on', label: 'Bypassed' },
+					{ id: 'toggle', label: 'Toggle' },
+				],
+			},
 		],
 		callback: (e) => {
 			if (!self) return
 
-			const channels = e.options.chs || []
+			const channels = e.options.channels || []
 			const linkGroup = String(e.options.link_group || '0')
+			const bypassOp = e.options.bypass || 'no_change'
 
-			for (const ch of channels) {
-				const chNum = Number(ch)
-				if (chNum < 1 || chNum > NUM_OUTPUTS) continue
+			// Assign channels to link group
+			if (channels.length > 0) {
+				for (const ch of channels) {
+					const chNum = Number(ch)
+					if (chNum < 1 || chNum > NUM_OUTPUTS) continue
 
-				self._cmdSendLine(`/device/output/${chNum}/output_link_group='${linkGroup}'`)
+					self._cmdSendLine(`/device/output/${chNum}/output_link_group='${linkGroup}'`)
 
-				// Update local state
-				if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
-				self.outputLinkGroupAssign[chNum] = Number(linkGroup)
+					// Update local state
+					if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
+					self.outputLinkGroupAssign[chNum] = Number(linkGroup)
 
-				const groupLabel = linkGroup === '0' ? 'Unassigned' : `Link Group ${linkGroup}`
-				self.log?.('info', `Output ${chNum} assigned to: ${groupLabel}`)
+					const groupLabel = linkGroup === '0' ? 'Unassigned' : `Link Group ${linkGroup}`
+					self.log?.('info', `Output ${chNum} assigned to: ${groupLabel}`)
+				}
+
+				if (typeof self.checkFeedbacks === 'function') {
+					self.checkFeedbacks('output_link_group_assigned')
+				}
 			}
 
-			if (typeof self.checkFeedbacks === 'function') {
-				self.checkFeedbacks('output_link_group_assigned')
+			// Handle bypass operation if not 'no_change' and link group is valid
+			if (bypassOp !== 'no_change' && linkGroup !== '0') {
+				const groupNum = Number(linkGroup)
+				if (groupNum >= 1 && groupNum <= 8) {
+					const currentBypass = self?.outputLinkGroupBypass?.[groupNum]
+					let targetBypass = false
+
+					if (bypassOp === 'on') {
+						targetBypass = true
+					} else if (bypassOp === 'off') {
+						targetBypass = false
+					} else if (bypassOp === 'toggle') {
+						targetBypass = currentBypass !== true
+					}
+
+					const value = targetBypass ? 'true' : 'false'
+					self._cmdSendLine(`/device/output_link_group/${groupNum}/bypass='${value}'`)
+
+					// Update local state
+					if (!self.outputLinkGroupBypass) self.outputLinkGroupBypass = {}
+					self.outputLinkGroupBypass[groupNum] = targetBypass
+
+					self.log?.('info', `Output Link Group ${groupNum} bypass: ${value}`)
+
+					if (typeof self.checkFeedbacks === 'function') {
+						self.checkFeedbacks('output_link_group_bypassed')
+					}
+				}
 			}
 		},
 	}
