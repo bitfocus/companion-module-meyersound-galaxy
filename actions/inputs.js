@@ -2069,7 +2069,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	actions['input_eq_knob_frequency'] = {
 		name: 'Input: Parametric EQ Knob - Frequency',
 		description:
-			'Adjust frequency for the selected input(s) and band. Range: 10 Hz to 20 kHz. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action. Octave-based acceleration adapts to current frequency for natural control.',
+			'Adjust frequency for the selected input(s) and band. Range: 10 Hz to 20 kHz. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action.',
 		options: [
 			{
 				type: 'number',
@@ -2100,7 +2100,11 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
 			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 10 : 1
 
-			let delta = base
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
+			}
+			const delta = Math.abs(base) * sign
 
 			if (!self.inputEQ) self.inputEQ = {}
 
@@ -2109,64 +2113,6 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				if (!self.inputEQ[ch][band]) self.inputEQ[ch][band] = {}
 
 				const currentValue = Number(self.inputEQ[ch][band].frequency ?? defaultFreqs[band])
-
-				// Time-based acceleration for rotary encoders with range-based tiers
-				if (e.surfaceId !== undefined) {
-					const now = Date.now()
-					const accelKey = `eq_freq_${e.surfaceId || 'default'}`
-
-					if (!self._rotaryAccel) self._rotaryAccel = {}
-
-					const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
-					const timeDiff = now - lastRotation.time
-
-					// 4-tier acceleration based on rotation speed
-					let speedTier = 0
-					if (timeDiff < 100) {
-						speedTier = Math.min(lastRotation.count + 1, 3)
-					}
-
-					self._rotaryAccel[accelKey] = { time: now, count: speedTier }
-
-					// Octave-based acceleration tiers based on CURRENT frequency (4 tiers: 0, 1, 2, 3)
-					// Organized by octave ranges for better musical/logarithmic control
-					let deltaTiers
-					if (currentValue < 31) {
-						// 10-31 Hz (sub-bass): 0.5, 1, 2, 4 (faster)
-						deltaTiers = [0.5, 1, 2, 4]
-					} else if (currentValue < 63) {
-						// 31-63 Hz: 1, 2, 5, 10 (faster)
-						deltaTiers = [1, 2, 5, 10]
-					} else if (currentValue < 125) {
-						// 63-125 Hz: 2, 5, 10, 20 (faster)
-						deltaTiers = [2, 5, 10, 20]
-					} else if (currentValue < 250) {
-						// 125-250 Hz: 5, 10, 20, 40 (faster)
-						deltaTiers = [5, 10, 20, 40]
-					} else if (currentValue < 500) {
-						// 250-500 Hz: 10, 20, 50, 100 (faster)
-						deltaTiers = [10, 20, 50, 100]
-					} else if (currentValue < 1000) {
-						// 500-1000 Hz: 20, 50, 100, 200 (faster)
-						deltaTiers = [20, 50, 100, 200]
-					} else if (currentValue < 2000) {
-						// 1k-2k Hz: 50, 100, 200, 500 (faster)
-						deltaTiers = [50, 100, 200, 500]
-					} else if (currentValue < 4000) {
-						// 2k-4k Hz: 100, 200, 500, 1000 (faster)
-						deltaTiers = [100, 200, 500, 1000]
-					} else if (currentValue < 8000) {
-						// 4k-8k Hz: 200, 500, 1000, 2000 (faster)
-						deltaTiers = [200, 500, 1000, 2000]
-					} else if (currentValue < 16000) {
-						// 8k-16k Hz: 500, 1000, 2000, 4000 (faster)
-						deltaTiers = [500, 1000, 2000, 4000]
-					} else {
-						// 16k-20k Hz: 1000, 2000, 3000, 5000 (faster)
-						deltaTiers = [1000, 2000, 3000, 5000]
-					}
-					delta = deltaTiers[speedTier] * (delta >= 0 ? 1 : -1)
-				}
 				let newValue = currentValue + delta
 
 				// Apply precision rules: 0.01 Hz below 100 Hz, 1 Hz above
