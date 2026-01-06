@@ -1016,7 +1016,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			if (!self) return
 			const key = buildRotaryKey(e)
 			if (!key) {
-				self.log?.('warn', 'Output PEQ coarse mode: no controlId/surfaceId available')
+				self.log?.('warn', 'Output PEQ gain coarse mode: no controlId/surfaceId available')
 				return
 			}
 			if (!self._rotaryPressState) self._rotaryPressState = {}
@@ -1029,6 +1029,43 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			} else {
 				self._rotaryPressState[key] = !self._rotaryPressState[key]
 				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
+			}
+		},
+	}
+
+	actions['output_eq_frequency_coarse_mode'] = {
+		name: 'Output: Parametric EQ Frequency Coarse Mode',
+		description: 'Use with the output PEQ frequency knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'Output PEQ frequency coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressStateFreq) self._rotaryPressStateFreq = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressStateFreq[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressStateFreq[key]
+			} else {
+				self._rotaryPressStateFreq[key] = !self._rotaryPressStateFreq[key]
+				if (!self._rotaryPressStateFreq[key]) delete self._rotaryPressStateFreq[key]
 			}
 		},
 	}
@@ -1118,13 +1155,22 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	actions['output_eq_knob_frequency'] = {
 		name: 'Output: Parametric EQ Knob - Frequency',
 		description:
-			'Adjust frequency for the selected output(s) and band. Range: 10 Hz to 20 kHz. Octave-based acceleration adapts to current frequency for natural control.',
+			'Adjust frequency for the selected output(s) and band. Range: 10 Hz to 20 kHz. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action. Octave-based acceleration adapts to current frequency for natural control.',
 		options: [
 			{
 				type: 'number',
-				id: 'delta',
-				label: 'Delta (Hz) - for button press',
+				id: 'delta_fine',
+				label: 'Frequency delta fine (Hz)',
 				default: 1,
+				min: -20000,
+				max: 20000,
+				step: 0.01,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Frequency delta coarse (Hz)',
+				default: 10,
 				min: -20000,
 				max: 20000,
 				step: 0.01,
@@ -1134,7 +1180,13 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			const chs = self?._eqKnobControlOutput?.selectedOutputs || [1]
 			const band = self?._eqKnobControlOutput?.selectedBand || 1
 			const defaultFreqs = { 1: 32, 2: 125, 3: 500, 4: 2000, 5: 8000, 6: 63, 7: 250, 8: 1000, 9: 4000, 10: 16000 }
-			let delta = Number(e.options.delta ?? 0)
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self?._rotaryPressStateFreq?.[key]
+
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 10 : 1
+
+			let delta = base
 
 			if (!self.outputEQ) self.outputEQ = {}
 
@@ -1231,9 +1283,10 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				const outputName = self?.outputName?.[ch] ? ` (${self.outputName[ch]})` : ''
 				const currentStr = currentValue < 100 ? currentValue.toFixed(2) : Math.round(currentValue).toString()
 				const finalStr = finalValue < 100 ? finalValue.toFixed(2) : Math.round(finalValue).toString()
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
 				self.log?.(
 					'info',
-					`Parametric EQ: Output ${ch}${outputName} Band ${band} frequency ${currentStr} + ${delta} = ${finalStr} Hz`,
+					`Parametric EQ (${modeLabel}): Output ${ch}${outputName} Band ${band} frequency ${currentStr} + ${delta} = ${finalStr} Hz`,
 				)
 			}
 
