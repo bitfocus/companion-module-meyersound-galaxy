@@ -42,6 +42,8 @@ const METER_BATCH_INTERVAL_MS = 100 // Batch meter updates to reduce UI thrashin
 const UI_REFRESH_DEBOUNCE_MS = 150 // Debounce delay for actions/feedbacks/variables refresh
 const PRESET_REFRESH_DEBOUNCE_MS = 250 // Debounce delay for preset refresh (slightly longer)
 const PREV_GAIN_CAPTURE_WINDOW_MS = 300 // Window to capture "previous" gain before SET operation
+const SUB_BATCH_SIZE = 50 // Number of subscription commands to send per batch
+const SUB_BATCH_DELAY_MS = 10 // Delay between subscription batches to prevent buffer overflow
 
 // Display labels
 const DISPLAY_BRIGHTNESS_LABELS = {
@@ -162,6 +164,10 @@ class ModuleInstance extends InstanceBase {
 		this.subBuf = ''
 		this._reconnectAttempts = 0
 		this._reconnectDelay = RECONNECT_DELAY_MS
+		this._subBatchMode = false
+		this._subBatchQueue = null
+		this._subFirstResponseReceived = false
+		this._initialDataReceived = false
 
 		// meters (dBFS)
 		this.inputMeter = {} // { ch: number }
@@ -442,8 +448,20 @@ class ModuleInstance extends InstanceBase {
 				label: 'Target IP / Hostname',
 				width: 8,
 				default: '192.168.0.100',
-				tooltip: 'Supports IPv4, IPv6, or a hostname',
+				tooltip: 'Supports IPv4, IPv6, or a hostname. You can also specify port with hostname:port',
 				regex: Regex.SOMETHING,
+				isVisible: (options) => (options.connection_type ?? 'physical') === 'physical',
+			},
+			{
+				type: 'number',
+				id: 'port',
+				label: 'Port',
+				width: 4,
+				default: DEFAULT_PHYSICAL_PORT,
+				min: 1,
+				max: 65535,
+				step: 1,
+				tooltip: 'Default: 25003 for physical Galaxy, 50503+ for Virtual Galaxy',
 				isVisible: (options) => (options.connection_type ?? 'physical') === 'physical',
 			},
 			{
@@ -458,18 +476,6 @@ class ModuleInstance extends InstanceBase {
 						: [{ id: VIRTUAL_MIN_ID, label: 'No virtual devices detected' }],
 				isVisible: (options) => (options.connection_type ?? 'physical') === 'virtual',
 			},
-			// Hidden: we still store port but UI drives it from connection type
-			{
-				type: 'number',
-				id: 'port',
-				label: 'Port',
-				width: 4,
-				default: DEFAULT_PHYSICAL_PORT,
-				min: 1,
-				max: 65535,
-				step: 1,
-				isVisible: () => false,
-			},
 		]
 	}
 
@@ -481,6 +487,8 @@ class ModuleInstance extends InstanceBase {
 			return
 		}
 		if (this.subSock) return
+
+		this.log?.('info', `Attempting connection to ${host}:${port}`)
 
 		const sock = new net.Socket()
 		this.subSock = sock
@@ -529,7 +537,13 @@ class ModuleInstance extends InstanceBase {
 			this._reconnectAttempts = 0
 			this._reconnectDelay = RECONNECT_DELAY_MS
 
-			this.updateStatus(InstanceStatus.Ok, 'Subscribed')
+			this.log?.('info', `Connected to ${host}:${port}, preparing subscriptions`)
+			this.updateStatus(InstanceStatus.Connecting, 'Sending subscriptions...')
+
+			// Enable batched subscription mode
+			this._subBatchMode = true
+			this._subBatchQueue = []
+			this._subFirstResponseReceived = false
 
 			// Subscribe inputs
 			for (let ch = 1; ch <= NUM_INPUTS; ch++) {
@@ -856,10 +870,84 @@ class ModuleInstance extends InstanceBase {
 			const bootAddr = `/project/boot_snapshot_id`
 			this._subWrite(`+${bootAddr}`)
 			this._subWrite(bootAddr)
+
+			// Start sending batched subscriptions
+			this._sendSubBatches().catch((err) => {
+				this.log?.('error', `Batched subscription failed: ${err?.message || err}`)
+				this._subBatchMode = false
+				this._subBatchQueue = null
+			})
 		})
 	}
 
+	async _sendSubBatches() {
+		const queue = this._subBatchQueue
+		if (!queue || queue.length === 0) {
+			this._subBatchMode = false
+			this._subBatchQueue = null
+			this.log?.('debug', 'No subscription commands to send')
+			return
+		}
+
+		const totalCommands = queue.length
+		this.log?.('info', `Starting batched subscription: ${totalCommands} commands in batches of ${SUB_BATCH_SIZE}`)
+
+		let batchNum = 0
+		const totalBatches = Math.ceil(totalCommands / SUB_BATCH_SIZE)
+
+		while (queue.length > 0) {
+			batchNum++
+			const batch = queue.splice(0, SUB_BATCH_SIZE)
+
+			this.updateStatus(
+				InstanceStatus.Connecting,
+				`Subscribing... (batch ${batchNum}/${totalBatches})`
+			)
+
+			// Send this batch
+			for (const cmd of batch) {
+				const s = this.subSock
+				if (!s) {
+					this._subBatchMode = false
+					this._subBatchQueue = null
+					this.log?.('warn', 'Subscription socket lost during batched send')
+					return
+				}
+				try {
+					s.write(Buffer.from(cmd + TX_EOL, 'utf8'))
+				} catch (err) {
+					this.log?.('debug', `Sub socket write failed: ${err?.message || err}`)
+				}
+			}
+
+			// Wait before sending next batch (except for last batch)
+			if (queue.length > 0) {
+				await new Promise((resolve) => setTimeout(resolve, SUB_BATCH_DELAY_MS))
+			}
+		}
+
+		// All batches sent
+		this._subBatchMode = false
+		this._subBatchQueue = null
+		this.log?.('info', `Sent all ${totalCommands} subscription commands in ${batchNum} batches`)
+
+		// If we've already received a response while batching, mark as subscribed now
+		if (this._subFirstResponseReceived) {
+			this.log?.('info', 'Responses already received during batching, marking as subscribed')
+			this.updateStatus(InstanceStatus.Ok, 'Subscribed')
+		} else {
+			this.updateStatus(InstanceStatus.Connecting, 'Waiting for device response...')
+		}
+	}
+
 	_subWrite(cmd) {
+		// If in batch mode, queue the command instead of sending immediately
+		if (this._subBatchMode && this._subBatchQueue) {
+			this._subBatchQueue.push(cmd)
+			return
+		}
+
+		// Normal mode: send immediately
 		const s = this.subSock
 		if (!s) return
 		try {
@@ -871,6 +959,24 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	_onSubLine(line) {
+		// Update status to "Subscribed" on first response from device
+		if (!this._subFirstResponseReceived) {
+			this._subFirstResponseReceived = true
+			this.log?.('info', `First response received from device, marking as subscribed`)
+			this.updateStatus(InstanceStatus.Ok, 'Subscribed')
+
+			// Schedule initial variable refresh after a short delay to let data populate
+			if (!this._initialDataReceived) {
+				setTimeout(() => {
+					if (!this._initialDataReceived) {
+						this._initialDataReceived = true
+						this.log?.('debug', 'Forcing variable refresh after initial data load')
+						this._refreshAllVariables()
+					}
+				}, 2000) // 2 second delay to let initial subscription data arrive
+			}
+		}
+
 		try {
 			this._onSubLineUnsafe(line)
 		} catch (err) {
@@ -2445,6 +2551,72 @@ class ModuleInstance extends InstanceBase {
 		vals['eq_output_current_bandwidth'] = '---'
 
 		this.setVariableValues(vals)
+	}
+
+	_refreshAllVariables() {
+		// Force re-apply all current state to variables
+		// This helps ensure variables populate after reconnection
+		try {
+			const vals = {}
+
+			// Input variables
+			for (let ch = 1; ch <= NUM_INPUTS; ch++) {
+				if (this.inMute && this.inMute[ch] !== undefined) {
+					vals[`input_${ch}_mute`] = this.inMute[ch] ? 'Muted' : 'Unmuted'
+				}
+				if (this.inGain && this.inGain[ch] !== undefined && typeof this.inGain[ch] === 'number') {
+					vals[`input_${ch}_gain_db`] = this.inGain[ch].toFixed(1)
+				}
+				if (this.inputName && this.inputName[ch]) {
+					vals[`input_${ch}_name`] = this.inputName[ch]
+				}
+				if (this.inputDelay && this.inputDelay[ch]?.ms !== undefined && typeof this.inputDelay[ch].ms === 'number') {
+					vals[`input_${ch}_delay_ms`] = this.inputDelay[ch].ms.toFixed(2)
+				}
+				if (this.inputMode && this.inputMode[ch] !== undefined) {
+					vals[`input_${ch}_mode`] = String(this.inputMode[ch])
+				}
+				if (this.inputMeter && this.inputMeter[ch] !== undefined && typeof this.inputMeter[ch] === 'number') {
+					vals[`input_${ch}_meter_dbfs`] = this.inputMeter[ch].toFixed(1)
+				}
+			}
+
+			// Output variables
+			for (let ch = 1; ch <= NUM_OUTPUTS; ch++) {
+				if (this.outMute && this.outMute[ch] !== undefined) {
+					vals[`output_${ch}_mute`] = this.outMute[ch] ? 'Muted' : 'Unmuted'
+				}
+				if (this.outGain && this.outGain[ch] !== undefined && typeof this.outGain[ch] === 'number') {
+					vals[`output_${ch}_gain_db`] = this.outGain[ch].toFixed(1)
+				}
+				if (this.outputName && this.outputName[ch]) {
+					vals[`output_${ch}_name`] = this.outputName[ch]
+				}
+				if (this.outputDelay && this.outputDelay[ch]?.ms !== undefined && typeof this.outputDelay[ch].ms === 'number') {
+					vals[`output_${ch}_delay_ms`] = this.outputDelay[ch].ms.toFixed(2)
+				}
+				if (this.outputMeter && this.outputMeter[ch] !== undefined && typeof this.outputMeter[ch] === 'number') {
+					vals[`output_${ch}_meter_dbfs`] = this.outputMeter[ch].toFixed(1)
+				}
+			}
+
+			// Entity/status variables
+			if (this.entity) {
+				for (const key of ENTITY_PATHS) {
+					if (this.entity[key] !== undefined && this.entity[key] !== null) {
+						vals[key] = String(this.entity[key])
+					}
+				}
+			}
+
+			// Only update if we have some values
+			if (Object.keys(vals).length > 0) {
+				this.setVariableValues(vals)
+				this.log?.('info', `Refreshed ${Object.keys(vals).length} variables after initial connection`)
+			}
+		} catch (err) {
+			this.log?.('error', `Error refreshing variables: ${err?.message || err}`)
+		}
 	}
 
 	_applyInMute(ch, val) {
@@ -4157,8 +4329,8 @@ class ModuleInstance extends InstanceBase {
 			}
 		}
 		if (changed) {
-			// no-op trigger; config fields re-render when reopened
-			this._virtualDevices = [...this._virtualDevices]
+			// Trigger config UI refresh to show updated device list
+			this.saveConfig(this.config)
 		}
 	}
 
@@ -4173,7 +4345,8 @@ class ModuleInstance extends InstanceBase {
 			}
 		}
 		if (changed) {
-			this._virtualDevices = [...this._virtualDevices]
+			// Trigger config UI refresh to show updated device list
+			this.saveConfig(this.config)
 		}
 	}
 
@@ -4198,8 +4371,21 @@ class ModuleInstance extends InstanceBase {
 		this._virtualScanInFlight = true
 		try {
 			const devices = await this._detectVirtualDevices()
+			const previousCount = this._virtualDevices?.length || 0
 			this._virtualDevices = devices
 			this._syncVirtualWatchers(devices)
+
+			// Log discovery results
+			if (devices.length > 0) {
+				this.log?.('info', `Found ${devices.length} virtual Galaxy device(s): ${devices.map(d => `ID ${d.id} (${d.name || d.model || 'Unknown'})`).join(', ')}`)
+			} else {
+				this.log?.('debug', `No virtual Galaxy devices detected on localhost`)
+			}
+
+			// Trigger config UI refresh if device list changed
+			if (devices.length !== previousCount) {
+				this.saveConfig(this.config)
+			}
 		} catch (err) {
 			this.log?.('debug', `Virtual discovery failed: ${err?.message || err}`)
 		} finally {
@@ -4208,12 +4394,14 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	async _detectVirtualDevices() {
+		this.log?.('debug', `Starting virtual device discovery scan (IDs ${VIRTUAL_MIN_ID}-${VIRTUAL_MAX_ID})`)
 		const probes = []
 		for (let id = VIRTUAL_MIN_ID; id <= VIRTUAL_MAX_ID; id++) {
 			probes.push(this._probeVirtualId(id))
 		}
 		const results = await Promise.all(probes)
 		const filtered = results.filter((r) => !!r)
+		this.log?.('debug', `Virtual discovery found ${filtered.length} device(s) from ${results.length} probes`)
 		const uniqueById = []
 		const seen = new Set()
 		for (const dev of filtered) {
@@ -4241,6 +4429,7 @@ class ModuleInstance extends InstanceBase {
 			let resolved = false
 			let fallbackTimer = null
 			let lastResult = null
+			let connected = false
 
 			const cleanup = (result) => {
 				if (resolved) return
@@ -4249,11 +4438,22 @@ class ModuleInstance extends InstanceBase {
 				try {
 					sock.destroy()
 				} catch {}
+				if (result) {
+					this.log?.('debug', `Virtual probe success: ${host}:${port} -> ID ${id} (${result.name || result.model || 'Unknown'})`)
+				}
 				resolve(result ?? lastResult ?? null)
 			}
 
-			sock.setTimeout(600, () => cleanup(null))
-			sock.on('error', () => cleanup(null))
+			sock.setTimeout(600, () => {
+				if (!connected) {
+					this.log?.('debug', `Virtual probe timeout (no connect): ${host}:${port}`)
+				}
+				cleanup(null)
+			})
+			sock.on('error', (err) => {
+				this.log?.('debug', `Virtual probe error: ${host}:${port} - ${err.code || err.message}`)
+				cleanup(null)
+			})
 			sock.on('close', () => cleanup(null))
 
 			let buf = ''
@@ -4277,6 +4477,8 @@ class ModuleInstance extends InstanceBase {
 			})
 
 			sock.connect(port, host, () => {
+				connected = true
+				this.log?.('debug', `Virtual probe connected: ${host}:${port}, querying device info`)
 				fallbackTimer = setTimeout(() => cleanup(lastResult), 200)
 				try {
 					sock.write(
