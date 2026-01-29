@@ -475,80 +475,12 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 	// NOTE: Inputs support 4 link groups (1-4)
 
-	actions['input_link_group_bypass'] = {
-		name: 'Input: Link Group Bypass',
-		options: [
-			{
-				type: 'dropdown',
-				id: 'operation',
-				label: 'Operation',
-				default: 'toggle',
-				choices: [
-					{ id: 'on', label: 'Bypass ON' },
-					{ id: 'off', label: 'Bypass OFF' },
-					{ id: 'toggle', label: 'Toggle' },
-				],
-			},
-			{
-				type: 'multidropdown',
-				id: 'groups',
-				label: 'Link Group(s)',
-				default: [],
-				choices: [
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-				],
-				minSelection: 0,
-			},
-		],
-		callback: (e) => {
-			if (!self) return
-			const op = e.options.operation
-			const groups = Array.isArray(e.options.groups)
-				? e.options.groups.map((g) => Number(g)).filter((g) => g >= 1 && g <= 4)
-				: []
-
-			if (groups.length === 0) {
-				self.log?.('warn', 'No valid input link groups selected')
-				return
-			}
-
-			for (const group of groups) {
-				const currentBypass = self?.inputLinkGroupBypass?.[group]
-				let targetBypass = false
-
-				if (op === 'on') {
-					targetBypass = true
-				} else if (op === 'off') {
-					targetBypass = false
-				} else {
-					targetBypass = currentBypass !== true
-				}
-
-				const value = targetBypass ? 'true' : 'false'
-				self._cmdSendLine(`/device/input_link_group/${group}/bypass='${value}'`)
-
-				// Update local state
-				if (!self.inputLinkGroupBypass) self.inputLinkGroupBypass = {}
-				self.inputLinkGroupBypass[group] = targetBypass
-
-				self.log?.('info', `Input Link Group ${group} bypass: ${value}`)
-			}
-
-			if (typeof self.checkFeedbacks === 'function') {
-				self.checkFeedbacks('input_link_group_bypassed')
-			}
-		},
-	}
-
-	actions['input_link_group_assign'] = {
-		name: 'Input: Assign to Link Group',
+	actions['input_link_group'] = {
+		name: 'Input: Link Group',
 		options: [
 			{
 				type: 'multidropdown',
-				id: 'chs',
+				id: 'channels',
 				label: 'Input Channel(s)',
 				default: [],
 				choices: inputChoicesFriendly,
@@ -558,7 +490,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				type: 'dropdown',
 				id: 'link_group',
 				label: 'Link Group',
-				default: '0',
+				default: '1',
 				choices: [
 					{ id: '0', label: 'Unassign' },
 					{ id: '1', label: 'Link Group 1' },
@@ -567,29 +499,75 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '4', label: 'Link Group 4' },
 				],
 			},
+			{
+				type: 'dropdown',
+				id: 'bypass',
+				label: 'Status',
+				default: 'no_change',
+				choices: [
+					{ id: 'no_change', label: 'No Change' },
+					{ id: 'off', label: 'Enabled' },
+					{ id: 'on', label: 'Bypassed' },
+					{ id: 'toggle', label: 'Toggle' },
+				],
+			},
 		],
 		callback: (e) => {
 			if (!self) return
 
-			const channels = e.options.chs || []
+			const channels = e.options.channels || []
 			const linkGroup = String(e.options.link_group || '0')
+			const bypassOp = e.options.bypass || 'no_change'
 
-			for (const ch of channels) {
-				const chNum = Number(ch)
-				if (chNum < 1 || chNum > NUM_INPUTS) continue
+			// Assign channels to link group
+			if (channels.length > 0) {
+				for (const ch of channels) {
+					const chNum = Number(ch)
+					if (chNum < 1 || chNum > NUM_INPUTS) continue
 
-				self._cmdSendLine(`/device/input/${chNum}/input_link_group=${linkGroup}`)
+					self._cmdSendLine(`/device/input/${chNum}/input_link_group=${linkGroup}`)
 
-				// Update local state
-				if (!self.inputLinkGroupAssign) self.inputLinkGroupAssign = {}
-				self.inputLinkGroupAssign[chNum] = Number(linkGroup)
+					// Update local state
+					if (!self.inputLinkGroupAssign) self.inputLinkGroupAssign = {}
+					self.inputLinkGroupAssign[chNum] = Number(linkGroup)
 
-				const groupLabel = linkGroup === '0' ? 'Unassigned' : `Link Group ${linkGroup}`
-				self.log?.('info', `Input ${chNum} assigned to: ${groupLabel}`)
+					const groupLabel = linkGroup === '0' ? 'Unassigned' : `Link Group ${linkGroup}`
+					self.log?.('info', `Input ${chNum} assigned to: ${groupLabel}`)
+				}
+
+				if (typeof self.checkFeedbacks === 'function') {
+					self.checkFeedbacks('input_link_group_assigned')
+				}
 			}
 
-			if (typeof self.checkFeedbacks === 'function') {
-				self.checkFeedbacks('input_link_group_assigned')
+			// Handle bypass operation if not 'no_change' and link group is valid
+			if (bypassOp !== 'no_change' && linkGroup !== '0') {
+				const groupNum = Number(linkGroup)
+				if (groupNum >= 1 && groupNum <= 4) {
+					const currentBypass = self?.inputLinkGroupBypass?.[groupNum]
+					let targetBypass = false
+
+					if (bypassOp === 'on') {
+						targetBypass = true
+					} else if (bypassOp === 'off') {
+						targetBypass = false
+					} else if (bypassOp === 'toggle') {
+						targetBypass = currentBypass !== true
+					}
+
+					const value = targetBypass ? 'true' : 'false'
+					self._cmdSendLine(`/device/input_link_group/${groupNum}/bypass='${value}'`)
+
+					// Update local state
+					if (!self.inputLinkGroupBypass) self.inputLinkGroupBypass = {}
+					self.inputLinkGroupBypass[groupNum] = targetBypass
+
+					self.log?.('info', `Input Link Group ${groupNum} bypass: ${value}`)
+
+					if (typeof self.checkFeedbacks === 'function') {
+						self.checkFeedbacks('input_link_group_bypassed')
+					}
+				}
 			}
 		},
 	}
@@ -1954,7 +1932,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			if (!self) return
 			const key = buildRotaryKey(e)
 			if (!key) {
-				self.log?.('warn', 'Input PEQ coarse mode: no controlId/surfaceId available')
+				self.log?.('warn', 'Input PEQ gain coarse mode: no controlId/surfaceId available')
 				return
 			}
 			if (!self._rotaryPressState) self._rotaryPressState = {}
@@ -1967,6 +1945,80 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			} else {
 				self._rotaryPressState[key] = !self._rotaryPressState[key]
 				if (!self._rotaryPressState[key]) delete self._rotaryPressState[key]
+			}
+		},
+	}
+
+	actions['input_eq_frequency_coarse_mode'] = {
+		name: 'Input: Parametric EQ Frequency Coarse Mode',
+		description: 'Use with the input PEQ frequency knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'Input PEQ frequency coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressStateFreq) self._rotaryPressStateFreq = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressStateFreq[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressStateFreq[key]
+			} else {
+				self._rotaryPressStateFreq[key] = !self._rotaryPressStateFreq[key]
+				if (!self._rotaryPressStateFreq[key]) delete self._rotaryPressStateFreq[key]
+			}
+		},
+	}
+
+	actions['input_eq_bandwidth_coarse_mode'] = {
+		name: 'Input: Parametric EQ Bandwidth Coarse Mode',
+		description: 'Use with the input PEQ bandwidth knob; press/hold/toggle to switch between fine and coarse steps.',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'mode',
+				label: 'Mode',
+				default: 'toggle',
+				choices: [
+					{ id: 'press', label: 'Press (coarse ON)' },
+					{ id: 'release', label: 'Release (coarse OFF)' },
+					{ id: 'toggle', label: 'Toggle coarse' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const key = buildRotaryKey(e)
+			if (!key) {
+				self.log?.('warn', 'Input PEQ bandwidth coarse mode: no controlId/surfaceId available')
+				return
+			}
+			if (!self._rotaryPressStateBW) self._rotaryPressStateBW = {}
+
+			const op = e.options.mode
+			if (op === 'press') {
+				self._rotaryPressStateBW[key] = true
+			} else if (op === 'release') {
+				delete self._rotaryPressStateBW[key]
+			} else {
+				self._rotaryPressStateBW[key] = !self._rotaryPressStateBW[key]
+				if (!self._rotaryPressStateBW[key]) delete self._rotaryPressStateBW[key]
 			}
 		},
 	}
@@ -2054,13 +2106,22 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	actions['input_eq_knob_frequency'] = {
 		name: 'Input: Parametric EQ Knob - Frequency',
 		description:
-			'Adjust frequency for the selected input(s) and band. Range: 10 Hz to 20 kHz. Octave-based acceleration adapts to current frequency for natural control.',
+			'Adjust frequency for the selected input(s) and band. Range: 10 Hz to 20 kHz. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action.',
 		options: [
 			{
 				type: 'number',
-				id: 'delta',
-				label: 'Delta (Hz) - for button press',
+				id: 'delta_fine',
+				label: 'Frequency delta fine (Hz)',
 				default: 1,
+				min: -20000,
+				max: 20000,
+				step: 0.01,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Frequency delta coarse (Hz)',
+				default: 10,
 				min: -20000,
 				max: 20000,
 				step: 0.01,
@@ -2070,7 +2131,17 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			const chs = self?._eqKnobControl?.selectedInputs || [1]
 			const band = self?._eqKnobControl?.selectedBand || 1
 			const defaultFreqs = { 1: 32, 2: 125, 3: 500, 4: 2000, 5: 8000 }
-			let delta = Number(e.options.delta ?? 0)
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self?._rotaryPressStateFreq?.[key]
+
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 10 : 1
+
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
+			}
+			const delta = Math.abs(base) * sign
 
 			if (!self.inputEQ) self.inputEQ = {}
 
@@ -2079,64 +2150,6 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				if (!self.inputEQ[ch][band]) self.inputEQ[ch][band] = {}
 
 				const currentValue = Number(self.inputEQ[ch][band].frequency ?? defaultFreqs[band])
-
-				// Time-based acceleration for rotary encoders with range-based tiers
-				if (e.surfaceId !== undefined) {
-					const now = Date.now()
-					const accelKey = `eq_freq_${e.surfaceId || 'default'}`
-
-					if (!self._rotaryAccel) self._rotaryAccel = {}
-
-					const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
-					const timeDiff = now - lastRotation.time
-
-					// 4-tier acceleration based on rotation speed
-					let speedTier = 0
-					if (timeDiff < 100) {
-						speedTier = Math.min(lastRotation.count + 1, 3)
-					}
-
-					self._rotaryAccel[accelKey] = { time: now, count: speedTier }
-
-					// Octave-based acceleration tiers based on CURRENT frequency (4 tiers: 0, 1, 2, 3)
-					// Organized by octave ranges for better musical/logarithmic control
-					let deltaTiers
-					if (currentValue < 31) {
-						// 10-31 Hz (sub-bass): 0.5, 1, 2, 4 (faster)
-						deltaTiers = [0.5, 1, 2, 4]
-					} else if (currentValue < 63) {
-						// 31-63 Hz: 1, 2, 5, 10 (faster)
-						deltaTiers = [1, 2, 5, 10]
-					} else if (currentValue < 125) {
-						// 63-125 Hz: 2, 5, 10, 20 (faster)
-						deltaTiers = [2, 5, 10, 20]
-					} else if (currentValue < 250) {
-						// 125-250 Hz: 5, 10, 20, 40 (faster)
-						deltaTiers = [5, 10, 20, 40]
-					} else if (currentValue < 500) {
-						// 250-500 Hz: 10, 20, 50, 100 (faster)
-						deltaTiers = [10, 20, 50, 100]
-					} else if (currentValue < 1000) {
-						// 500-1000 Hz: 20, 50, 100, 200 (faster)
-						deltaTiers = [20, 50, 100, 200]
-					} else if (currentValue < 2000) {
-						// 1k-2k Hz: 50, 100, 200, 500 (faster)
-						deltaTiers = [50, 100, 200, 500]
-					} else if (currentValue < 4000) {
-						// 2k-4k Hz: 100, 200, 500, 1000 (faster)
-						deltaTiers = [100, 200, 500, 1000]
-					} else if (currentValue < 8000) {
-						// 4k-8k Hz: 200, 500, 1000, 2000 (faster)
-						deltaTiers = [200, 500, 1000, 2000]
-					} else if (currentValue < 16000) {
-						// 8k-16k Hz: 500, 1000, 2000, 4000 (faster)
-						deltaTiers = [500, 1000, 2000, 4000]
-					} else {
-						// 16k-20k Hz: 1000, 2000, 3000, 5000 (faster)
-						deltaTiers = [1000, 2000, 3000, 5000]
-					}
-					delta = deltaTiers[speedTier] * (delta >= 0 ? 1 : -1)
-				}
 				let newValue = currentValue + delta
 
 				// Apply precision rules: 0.01 Hz below 100 Hz, 1 Hz above
@@ -2167,9 +2180,10 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				const inputName = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
 				const currentStr = currentValue < 100 ? currentValue.toFixed(2) : Math.round(currentValue).toString()
 				const finalStr = finalValue < 100 ? finalValue.toFixed(2) : Math.round(finalValue).toString()
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
 				self.log?.(
 					'info',
-					`Parametric EQ: Input ${ch}${inputName} Band ${band} frequency ${currentStr} + ${delta} = ${finalStr} Hz`,
+					`Parametric EQ (${modeLabel}): Input ${ch}${inputName} Band ${band} frequency ${currentStr} + ${delta} = ${finalStr} Hz`,
 				)
 			}
 
@@ -2183,13 +2197,22 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	actions['input_eq_knob_bandwidth'] = {
 		name: 'Input: Parametric EQ Knob - Bandwidth (Q)',
 		description:
-			'Adjust bandwidth/Q for the selected input(s) and band. Range: 0.1 to 2. Acceleration (3 tiers): 0.01 → 0.05 → 0.1 (precise).',
+			'Adjust bandwidth/Q for the selected input(s) and band. Range: 0.1 to 2. Fine/Coarse steps, coarse when the rotary/button is pressed via the coarse-mode action.',
 		options: [
 			{
 				type: 'number',
-				id: 'delta',
-				label: 'Delta - for button press',
+				id: 'delta_fine',
+				label: 'Bandwidth delta fine',
 				default: 0.01,
+				min: -2,
+				max: 2,
+				step: 0.01,
+			},
+			{
+				type: 'number',
+				id: 'delta_coarse',
+				label: 'Bandwidth delta coarse',
+				default: 0.1,
 				min: -2,
 				max: 2,
 				step: 0.01,
@@ -2198,30 +2221,17 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		callback: (e) => {
 			const chs = self?._eqKnobControl?.selectedInputs || [1]
 			const band = self?._eqKnobControl?.selectedBand || 1
-			let delta = Number(e.options.delta ?? 0)
+			const key = buildRotaryKey(e)
+			const isCoarse = key && self?._rotaryPressStateBW?.[key]
 
-			// Time-based acceleration for rotary encoders
-			if (e.surfaceId !== undefined) {
-				const now = Date.now()
-				const accelKey = `eq_bw_${e.surfaceId || 'default'}`
+			let base = Number(isCoarse ? e.options.delta_coarse : e.options.delta_fine)
+			if (!Number.isFinite(base) || base === 0) base = isCoarse ? 0.1 : 0.01
 
-				if (!self._rotaryAccel) self._rotaryAccel = {}
-
-				const lastRotation = self._rotaryAccel[accelKey] || { time: 0, count: 0 }
-				const timeDiff = now - lastRotation.time
-
-				// 4-tier acceleration based on rotation speed
-				let speedTier = 0
-				if (timeDiff < 100) {
-					speedTier = Math.min(lastRotation.count + 1, 3)
-				}
-
-				self._rotaryAccel[accelKey] = { time: now, count: speedTier }
-
-				// Acceleration tiers: 0 = 0.01, 1 = 0.05, 2 = 0.1, 3 = 0.2 (more precise)
-				const deltaTiers = [0.01, 0.05, 0.1, 0.2]
-				delta = deltaTiers[speedTier] * (delta >= 0 ? 1 : -1)
+			let sign = base >= 0 ? 1 : -1
+			if (typeof e?.encoder_delta === 'number' && e.encoder_delta !== 0) {
+				sign = e.encoder_delta > 0 ? 1 : -1
 			}
+			const delta = Math.abs(base) * sign
 
 			if (!self.inputEQ) self.inputEQ = {}
 
@@ -2249,9 +2259,11 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				}
 
 				const inputName = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
+				const deltaStr = delta >= 0 ? `+${delta.toFixed(2)}` : delta.toFixed(2)
+				const modeLabel = isCoarse ? 'coarse' : 'fine'
 				self.log?.(
 					'info',
-					`Parametric EQ: Input ${ch}${inputName} Band ${band} bandwidth ${currentValue.toFixed(1)} + ${delta.toFixed(1)} = ${finalValue.toFixed(1)}`,
+					`Parametric EQ (${modeLabel}): Input ${ch}${inputName} Band ${band} bandwidth ${currentValue.toFixed(2)} ${deltaStr} = ${finalValue.toFixed(2)}`,
 				)
 			}
 
