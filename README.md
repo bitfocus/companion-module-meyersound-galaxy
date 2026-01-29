@@ -1,82 +1,105 @@
+# companion-module-meyersound-galaxy
+
 [![Companion Module Checks](https://github.com/bitfocus/companion-module-meyersound-galaxy/actions/workflows/companion-module-checks.yaml/badge.svg)](https://github.com/bitfocus/companion-module-meyersound-galaxy/actions/workflows/companion-module-checks.yaml)
 
-This is the unofficial module for Meyer Sound Galaxy.
+Unofficial Bitfocus Companion module for Meyer Sound Galaxy processors.
 
-Tested with real Galaxy 816 and virtual Galaxy, but should be compatible with 408,816AES. Bluehorn has some difference that needs to be tested.
+Control your Meyer Sound Galaxy processors directly from Bitfocus Companion with real-time control, variables, and feedback for inputs, outputs, matrices, snapshots, hardware status, and more.
 
-I starting coding this using ChatGPT5 in August 2025 during the main act of a festival I was doing. Yeah, no sh\*\*. I am nowhere near a real programmer, and I have profound respect for all of you guys. I spend around 10 hours in total so far. Lot of prompt and test here and there and various GUI improvement.
+## Compatibility
 
-Amazingly, technology can bring an idea to life even if you know only a little about programming. What an era!
+- **Tested:** Galaxy 816, Galaxy Virtual
+- **Should work:** Galaxy 408, Galaxy 816 AES
+- **Partial support:** Bluehorn (some differences may require testing)
+- **Not compatible:** Galileo, Callisto
 
-Basic actions, feedback and variables have been implemented. More to come. Don't hesitate to Reach out if you have an idea and a specific need.
+## Setup
 
-Thanks to José Gaudin to provide the ideas and his help!
+1. In Companion, add the **Meyer Sound Galaxy** module
+2. Configure:
+   - **IP Address** of the Galaxy processor
+   - **Port** (default: 25003)
+3. The module will automatically subscribe to all inputs, outputs, matrices, clocks, and status channels
+4. Variables, feedbacks, and presets are instantly available
 
-Control your Meyer Sound Galaxy processors directly from Bitfocus Companion.
-This module provides full integration with real-time control, variables, and feedback for inputs, outputs, matrices, snapshots, hardware status and more.
+## Features
 
-I only implement what I needed so far but there is more to come. Let me know if something you need is missing!
+### Speaker Test
+Cycles through outputs automatically for quick speaker line testing. Supports solo or paired (A+B) modes with adjustable timing. Outputs are muted/unmuted automatically during the sequence.
 
-🔧Setup 1. In Companion, add the Meyer Sound Galaxy module. 2. Configure:
-• IP Address of the Galaxy
-• Port (default: 25003) 3. After connection, the module will automatically subscribe to all inputs, outputs, matrices, clocks, and status channels. 4. Variables, feedbacks, and presets are instantly available for use in your Companion buttons.
+### Inputs
+- Mute, unmute, toggle
+- Set, nudge, or fade gain (dB)
+- Parametric EQ control with fine/coarse modes
+- Link group assignment and bypass
+- Variables for name, mute state, and gain
+- Feedback for mute status and gain levels
 
-✨Features Action's
+### Outputs
+- Mute, unmute, toggle
+- Set, nudge, or fade gain (dB)
+- Parametric EQ control with fine/coarse modes
+- Link group assignment and bypass
+- Line array design tools
+- Factory reset per channel
+- Variables for name, mute state, and gain
+- Feedback for mute status and gain levels
 
-    • Speaker Test:
-        Cycles through your outputs automatically so you can quickly test speaker lines. You can run it one output at a time (solo) or in pairs (A+B). The timing between steps is adjustable, and outputs are muted/unmuted automatically during the chase.
+### Matrix
+- Select multiple inputs and outputs simultaneously
+- Set, nudge, or fade crosspoint gains
+- Variables and feedback for all crosspoints
 
-    Inputs
-    • Mute/unmute/toggle
-    • Set, nudge, or fade gain (dB)
-    • Variables for input name, mute state, and gain value
-    • Feedback for mute status and gain levels
-    Outputs
-    • Mute/unmute/toggle
-    • Set, nudge, or fade gain (dB)
-    • Variables for output name, mute state, and gain value
-    • Feedback for mute status and gain levels
-    Matrix
-    • Select multiple inputs and outputs at once
-    • Set, nudge, or fade crosspoint gains
-    • Variables and feedback for all crosspoints
+### Snapshots
+- Recall snapshots (0–255)
+- Variables for active snapshot (ID, name, timestamps)
+- Feedback for snapshot state
 
-    Snapshots
-    • Recall snapshots (0–255)
-    • Variables for active snapshot (ID, name, timestamps, etc.)
-    • Feedback for snapshot state
-    Presets
-    • Auto-generated mute buttons for inputs and outputs
-    • Labels show channel number, name, and gain
-    • Feedback coloring (e.g. red when muted)
-    Front Panel Lockout
-    • Lock/unlock Galaxy hardware front panel
-    • Feedback shows live state
+### Presets
+- Auto-generated mute buttons for inputs and outputs
+- Labels display channel number, name, and gain
+- Feedback coloring (red when muted)
 
-    Status & System Info
-    • Device info (model, firmware, serial, group name)
-    • Clock & sync (AES, word clock, system clock)
-    • Network status (IP, MAC, speed, etc.)
-    • RTC date & time
+### Front Panel Lockout
+- Lock/unlock Galaxy hardware front panel
+- Feedback shows live state
 
-📊 Variables
+### Status & System Info
+- Device info (model, firmware, serial, group name)
+- Clock & sync (AES, word clock, system clock)
+- Network status (IP, MAC, speed)
+- RTC date & time
 
-    Example variables you can use in button labels:
-    • $(Galaxy:input_1_name) → Input 1 name
-    • $(Galaxy:input_1_gain_db) → Input 1 gain in dB
-    • $(Galaxy:input_1_mute) → true/false mute state
-    • $(Galaxy:output_3_name) → Output 3 name
-    • $(Galaxy:snapshot_active_id) → Currently active snapshot ID
+## Variables
 
-🖲 Feedbacks
-• Input/output mute status (turns red when muted)
-• Gain threshold comparisons (equal, above, below target dB)
-• Matrix crosspoint gain monitoring
-• Front panel lock state
+Example variables for button labels:
 
-⚡ Notes
-• Requires Companion v4 or newer, (may work with v3 but not tested)
-• Tested with Meyer Sound Galaxy hardware (firmware version 2.9.1) but
-should work with any version since Compass v4
-Not compatible with Galileo/Callisto
-• Community-driven, unofficial module. Use at your own risk
+| Variable | Description |
+|----------|-------------|
+| `$(Galaxy:input_1_name)` | Input 1 name |
+| `$(Galaxy:input_1_gain_db)` | Input 1 gain in dB |
+| `$(Galaxy:input_1_mute)` | Input 1 mute state (true/false) |
+| `$(Galaxy:output_3_name)` | Output 3 name |
+| `$(Galaxy:snapshot_active_id)` | Currently active snapshot ID |
+
+## Feedbacks
+
+- Input/output mute status (visual indicator when muted)
+- Gain threshold comparisons (equal, above, below target dB)
+- Matrix crosspoint gain monitoring
+- Front panel lock state
+
+## Requirements
+
+- Bitfocus Companion v3.0 or newer (v4+ recommended)
+- Meyer Sound Galaxy processor with firmware 2.9.1 or newer
+
+## Notes
+
+This is a community-driven, unofficial module. Use at your own risk.
+
+Feature requests and bug reports are welcome via [GitHub Issues](https://github.com/bitfocus/companion-module-meyersound-galaxy/issues).
+
+## Acknowledgments
+
+Thanks to José Gaudin and David Vincent for their ideas and contributions.
