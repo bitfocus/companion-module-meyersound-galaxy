@@ -27,6 +27,26 @@ Control your Meyer Sound Galaxy processors directly from Bitfocus Companion with
 ### Speaker Test
 Cycles through outputs automatically for quick speaker line testing. Supports solo or paired (A+B) modes with adjustable timing. Outputs are muted/unmuted automatically during the sequence.
 
+### Line Array Design
+Configure multiple outputs for line array deployments with a single action:
+- Select loudspeaker model (LEO-M, LYON, LEOPARD, MICA, PANTHER, MINA, LINA, etc.)
+- Set number of elements and elements per output
+- Phase curve selection per loudspeaker type
+- Mixed array support with automatic delay compensation
+- Optional starting point presets
+- Output link group assignment with automatic enable
+- Channel naming with custom prefix
+- LMBC (Low-Mid Beam Control) configuration with beam angle, control type, and array assignment
+
+### Subwoofer Design Assist
+Four deployment modes for subwoofer configurations:
+- **End-Fire**: Calculate and apply delay taps based on target frequency and air temperature. Supports 2-8 taps with recommended spacing preview.
+- **Array**: Configure arc/curved arrays with delay timing based on sub spacing, arc angle, and temperature. Automatic symmetric delay calculation.
+- **Array End-Fire**: Combines end-fire rows with arc configuration for multi-row deployments.
+- **Gradient**: Apply gradient subwoofer presets with front and reversed polarity outputs.
+
+All modes support loudspeaker selection for product integration, starting points, output link group assignment, and optional factory reset before applying settings.
+
 ### Inputs
 - Mute, unmute, toggle
 - Set, nudge, or fade gain (dB)
