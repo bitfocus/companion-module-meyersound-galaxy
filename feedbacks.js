@@ -22,6 +22,32 @@ module.exports = function UpdateFeedbacks(self, NUM_INPUTS, NUM_OUTPUTS) {
 	const outputChoicesFriendly = buildOutputChoices(self, NUM_OUTPUTS)
 	const snapshotChoices = buildSnapshotChoices(self)
 	const snapshotBootChoices = [...snapshotChoices, { id: '-1', label: 'No boot snapshot (-1 disables boot recall)' }]
+
+	/**
+	 * Generate input link group choices with names
+	 */
+	const getInputLinkGroupChoices = () => {
+		const choices = []
+		for (let group = 1; group <= 4; group++) {
+			const name = self?.inputLinkGroupName?.[group]
+			const label = name && name.trim() !== '' ? `Link Group ${group} (${name})` : `Link Group ${group}`
+			choices.push({ id: String(group), label })
+		}
+		return choices
+	}
+
+	/**
+	 * Generate output link group choices with names
+	 */
+	const getOutputLinkGroupChoices = () => {
+		const choices = []
+		for (let group = 1; group <= 8; group++) {
+			const name = self?.outputLinkGroupName?.[group]
+			const label = name && name.trim() !== '' ? `Link Group ${group} (${name})` : `Link Group ${group}`
+			choices.push({ id: String(group), label })
+		}
+		return choices
+	}
 	const displayBrightnessChoices = [
 		{ id: '0', label: 'Level 0 (Dim)' },
 		{ id: '1', label: 'Level 1 (Normal)' },
@@ -74,12 +100,7 @@ module.exports = function UpdateFeedbacks(self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'group',
 				label: 'Link Group',
 				default: '1',
-				choices: [
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-				],
+				choices: getInputLinkGroupChoices(),
 			},
 		],
 		callback: (fb) => {
@@ -99,16 +120,7 @@ module.exports = function UpdateFeedbacks(self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'group',
 				label: 'Link Group',
 				default: '1',
-				choices: [
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
+				choices: getOutputLinkGroupChoices(),
 			},
 		],
 		callback: (fb) => {

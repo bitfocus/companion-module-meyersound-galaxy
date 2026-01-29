@@ -225,6 +225,9 @@ class ModuleInstance extends InstanceBase {
 		this.outputLinkGroupBypass = {} // { group: boolean }
 		this.inputLinkGroupAssign = {} // { ch: group (0-4) }
 		this.outputLinkGroupAssign = {} // { ch: group (0-8) }
+		this.inputLinkGroupName = {} // { group: string }
+		this.outputLinkGroupName = {} // { group: string }
+		this.beamControlArrayName = {} // { array: string }
 
 		// names
 		this.inputName = {} // { ch: string }
@@ -800,6 +803,25 @@ class ModuleInstance extends InstanceBase {
 				this._subWrite(addr)
 			}
 
+			// Link group names
+			for (let group = 1; group <= 4; group++) {
+				let addr = `/device/input_link_group/${group}/name`
+				this._subWrite(`+${addr}`)
+				this._subWrite(addr)
+			}
+			for (let group = 1; group <= 8; group++) {
+				let addr = `/device/output_link_group/${group}/name`
+				this._subWrite(`+${addr}`)
+				this._subWrite(addr)
+			}
+
+			// Beam control array names
+			for (let array = 1; array <= 4; array++) {
+				let addr = `/processing/beam_control_array/${array}/name`
+				this._subWrite(`+${addr}`)
+				this._subWrite(addr)
+			}
+
 			// Device input modes (subscribe + seed)
 			for (let ch = 1; ch <= 32; ch++) {
 				const addr = `/device/input/${ch}/mode`
@@ -1046,6 +1068,21 @@ class ModuleInstance extends InstanceBase {
 		if (nm) {
 			if (nm.kind === 'input') this._applyInputName(nm.ch, nm.value)
 			else if (nm.kind === 'output') this._applyOutputName(nm.ch, nm.value)
+			return
+		}
+
+		// link group names
+		const lgn = this._parseLinkGroupName(line)
+		if (lgn) {
+			if (lgn.kind === 'input') this._applyInputLinkGroupName(lgn.group, lgn.value)
+			else if (lgn.kind === 'output') this._applyOutputLinkGroupName(lgn.group, lgn.value)
+			return
+		}
+
+		// beam control array names
+		const bcan = this._parseBeamControlArrayName(line)
+		if (bcan) {
+			this._applyBeamControlArrayName(bcan.array, bcan.value)
 			return
 		}
 
@@ -2773,6 +2810,30 @@ class ModuleInstance extends InstanceBase {
 		this.checkFeedbacks('output_link_group_assigned')
 	}
 
+	_applyInputLinkGroupName(group, name) {
+		if (!this.inputLinkGroupName) this.inputLinkGroupName = {}
+		if (this.inputLinkGroupName[group] === name) return
+		this.inputLinkGroupName[group] = name
+		this.setVariableValues({ [`input_link_group_${group}_name`]: name })
+		this._scheduleActionsRefresh()
+	}
+
+	_applyOutputLinkGroupName(group, name) {
+		if (!this.outputLinkGroupName) this.outputLinkGroupName = {}
+		if (this.outputLinkGroupName[group] === name) return
+		this.outputLinkGroupName[group] = name
+		this.setVariableValues({ [`output_link_group_${group}_name`]: name })
+		this._scheduleActionsRefresh()
+	}
+
+	_applyBeamControlArrayName(array, name) {
+		if (!this.beamControlArrayName) this.beamControlArrayName = {}
+		if (this.beamControlArrayName[array] === name) return
+		this.beamControlArrayName[array] = name
+		this.setVariableValues({ [`beam_control_array_${array}_name`]: name })
+		this._scheduleActionsRefresh()
+	}
+
 	_applyMatrixCrosspointsUsed(count) {
 		if (this.matrixCrosspointsUsed === count) return
 		this.matrixCrosspointsUsed = count
@@ -3751,6 +3812,28 @@ class ModuleInstance extends InstanceBase {
 		const val = this._extractRightHandValue(text)
 		if (val == null) return undefined
 		return { kind, ch, value: val }
+	}
+
+	_parseLinkGroupName(text) {
+		let m = text.match(/\/device\/(input|output)_link_group\/(\d+)\/name\b/i)
+		if (!m) return undefined
+		const kind = m[1].toLowerCase()
+		const group = Number(m[2])
+		if (kind === 'input' && (group < 1 || group > 4)) return undefined
+		if (kind === 'output' && (group < 1 || group > 8)) return undefined
+		const val = this._extractRightHandValue(text)
+		if (val == null) return undefined
+		return { kind, group, value: val }
+	}
+
+	_parseBeamControlArrayName(text) {
+		let m = text.match(/\/processing\/beam_control_array\/(\d+)\/name\b/i)
+		if (!m) return undefined
+		const array = Number(m[1])
+		if (array < 1 || array > 4) return undefined
+		const val = this._extractRightHandValue(text)
+		if (val == null) return undefined
+		return { array, value: val }
 	}
 
 	_parseFanStatus(text) {

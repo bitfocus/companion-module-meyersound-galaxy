@@ -58,138 +58,31 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		return normalizeSpeakerKey(key).replace(/_/g, '')
 	}
 
-	// Factory reset commands template (will replace {ch} with actual channel number)
-	const FACTORY_RESET_COMMANDS = [
-		"/processing/output/{ch}/gain='0'",
-		"/processing/output/{ch}/mute='true'",
-		"/processing/output/{ch}/delay='0'",
-		"/processing/output/{ch}/variable_eq/bypass='true'",
-		"/processing/output/{ch}/variable_eq/frequency='1000'",
-		"/processing/output/{ch}/variable_eq/q='1'",
-		"/processing/output/{ch}/variable_eq/type='0'",
-		"/processing/output/{ch}/equalization_bypass='false'",
-		"/processing/output/{ch}/ushaping/bypass='false'",
-		"/processing/output/{ch}/ushaping/1/gain='0'",
-		"/processing/output/{ch}/ushaping/2/gain='0'",
-		"/processing/output/{ch}/ushaping/3/gain='0'",
-		"/processing/output/{ch}/ushaping/4/gain='0'",
-		"/processing/output/{ch}/ushaping/5/gain='0'",
-		"/processing/output/{ch}/ushaping/1/frequency='62'",
-		"/processing/output/{ch}/ushaping/1/slope='2'",
-		"/processing/output/{ch}/ushaping/2/frequency='250'",
-		"/processing/output/{ch}/ushaping/2/slope='2'",
-		"/processing/output/{ch}/ushaping/3/frequency='1000'",
-		"/processing/output/{ch}/ushaping/3/slope='2'",
-		"/processing/output/{ch}/ushaping/4/frequency='4000'",
-		"/processing/output/{ch}/ushaping/4/slope='2'",
-		"/processing/output/{ch}/eq/bypass='false'",
-		"/processing/output/{ch}/eq/1/band_bypass='false'",
-		"/processing/output/{ch}/eq/1/frequency='32'",
-		"/processing/output/{ch}/eq/1/bandwidth='1'",
-		"/processing/output/{ch}/eq/1/gain='0'",
-		"/processing/output/{ch}/eq/2/band_bypass='false'",
-		"/processing/output/{ch}/eq/2/frequency='63'",
-		"/processing/output/{ch}/eq/2/bandwidth='1'",
-		"/processing/output/{ch}/eq/2/gain='0'",
-		"/processing/output/{ch}/eq/3/band_bypass='false'",
-		"/processing/output/{ch}/eq/3/frequency='125'",
-		"/processing/output/{ch}/eq/3/bandwidth='1'",
-		"/processing/output/{ch}/eq/3/gain='0'",
-		"/processing/output/{ch}/eq/4/band_bypass='false'",
-		"/processing/output/{ch}/eq/4/frequency='250'",
-		"/processing/output/{ch}/eq/4/bandwidth='1'",
-		"/processing/output/{ch}/eq/4/gain='0'",
-		"/processing/output/{ch}/eq/5/band_bypass='false'",
-		"/processing/output/{ch}/eq/5/frequency='500'",
-		"/processing/output/{ch}/eq/5/bandwidth='1'",
-		"/processing/output/{ch}/eq/5/gain='0'",
-		"/processing/output/{ch}/eq/6/band_bypass='false'",
-		"/processing/output/{ch}/eq/6/frequency='1000'",
-		"/processing/output/{ch}/eq/6/bandwidth='1'",
-		"/processing/output/{ch}/eq/6/gain='0'",
-		"/processing/output/{ch}/eq/7/band_bypass='false'",
-		"/processing/output/{ch}/eq/7/frequency='2000'",
-		"/processing/output/{ch}/eq/7/bandwidth='1'",
-		"/processing/output/{ch}/eq/7/gain='0'",
-		"/processing/output/{ch}/eq/8/band_bypass='false'",
-		"/processing/output/{ch}/eq/8/frequency='4000'",
-		"/processing/output/{ch}/eq/8/bandwidth='1'",
-		"/processing/output/{ch}/eq/8/gain='0'",
-		"/processing/output/{ch}/eq/9/band_bypass='false'",
-		"/processing/output/{ch}/eq/9/bandwidth='1'",
-		"/processing/output/{ch}/eq/9/gain='0'",
-		"/processing/output/{ch}/eq/10/band_bypass='false'",
-		"/processing/output/{ch}/eq/10/frequency='16000'",
-		"/processing/output/{ch}/eq/10/bandwidth='1'",
-		"/processing/output/{ch}/eq/10/gain='0'",
-		"/processing/output/{ch}/highpass/bypass='true'",
-		"/processing/output/{ch}/highpass/type='11'",
-		"/processing/output/{ch}/highpass/frequency='40'",
-		"/processing/output/{ch}/lowpass/bypass='true'",
-		"/processing/output/{ch}/lowpass/type='11'",
-		"/processing/output/{ch}/lowpass/frequency='160'",
-		"/processing/output/{ch}/polarity_reversal='false'",
-		"/processing/output/{ch}/delay_integration/type='1'",
-		"/processing/output/{ch}/delay_integration/polarity_reversal='false'",
-		"/processing/output/{ch}/atmospheric/bypass='true'",
-		"/processing/output/{ch}/atmospheric/distance='0'",
-		"/processing/output/{ch}/atmospheric/gain='10'",
-		"/processing/output/{ch}/allpass/1/band_bypass='true'",
-		"/processing/output/{ch}/allpass/1/frequency='32'",
-		"/processing/output/{ch}/allpass/1/q='1'",
-		"/processing/output/{ch}/allpass/2/band_bypass='true'",
-		"/processing/output/{ch}/allpass/2/frequency='64'",
-		"/processing/output/{ch}/allpass/2/q='1'",
-		"/processing/output/{ch}/allpass/3/band_bypass='true'",
-		"/processing/output/{ch}/allpass/3/frequency='128'",
-		"/processing/output/{ch}/allpass/3/q='1'",
-		"/processing/output/{ch}/allpass/bypass='false'",
-		"/processing/output/{ch}/delay_integration/1/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/1/frequency='32'",
-		"/processing/output/{ch}/delay_integration/1/q='1'",
-		"/processing/output/{ch}/delay_integration/2/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/2/frequency='64'",
-		"/processing/output/{ch}/delay_integration/2/q='1'",
-		"/processing/output/{ch}/delay_integration/3/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/3/frequency='128'",
-		"/processing/output/{ch}/delay_integration/3/q='1'",
-		"/processing/output/{ch}/delay_integration/4/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/4/frequency='256'",
-		"/processing/output/{ch}/delay_integration/4/q='1'",
-		"/processing/output/{ch}/delay_integration/5/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/5/frequency='362'",
-		"/processing/output/{ch}/delay_integration/5/q='1'",
-		"/processing/output/{ch}/delay_integration/6/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/6/frequency='512'",
-		"/processing/output/{ch}/delay_integration/6/q='1'",
-		"/processing/output/{ch}/delay_integration/7/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/7/frequency='724.1'",
-		"/processing/output/{ch}/delay_integration/7/q='1'",
-		"/processing/output/{ch}/delay_integration/8/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/8/frequency='1024'",
-		"/processing/output/{ch}/delay_integration/8/q='1'",
-		"/processing/output/{ch}/delay_integration/9/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/9/frequency='1448.2'",
-		"/processing/output/{ch}/delay_integration/9/q='1'",
-		"/processing/output/{ch}/delay_integration/10/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/10/frequency='2048'",
-		"/processing/output/{ch}/delay_integration/10/q='1'",
-		"/processing/output/{ch}/delay_integration/11/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/11/frequency='2896.3'",
-		"/processing/output/{ch}/delay_integration/11/q='1'",
-		"/processing/output/{ch}/delay_integration/12/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/12/frequency='4096'",
-		"/processing/output/{ch}/delay_integration/12/q='1'",
-		"/processing/output/{ch}/delay_integration/13/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/13/frequency='5792.6'",
-		"/processing/output/{ch}/delay_integration/13/q='1'",
-		"/processing/output/{ch}/delay_integration/14/band_bypass='true'",
-		"/processing/output/{ch}/delay_integration/14/frequency='8192'",
-		"/processing/output/{ch}/delay_integration/14/q='1'",
-		"/processing/output/{ch}/beam_control_allpass/band_bypass='true'",
-		"/processing/output/{ch}/beam_control_allpass/frequency='32'",
-		"/processing/output/{ch}/beam_control_allpass/q='1'",
-	]
+	/**
+	 * Generate output link group choices with names
+	 */
+	const getOutputLinkGroupChoices = () => {
+		const choices = [{ id: '0', label: 'None (Unassigned)' }]
+		for (let group = 1; group <= 8; group++) {
+			const name = self?.outputLinkGroupName?.[group]
+			const label = name && name.trim() !== '' ? `Link Group ${group} (${name})` : `Link Group ${group}`
+			choices.push({ id: String(group), label })
+		}
+		return choices
+	}
+
+	/**
+	 * Generate beam control array choices with names
+	 */
+	const getBeamControlArrayChoices = () => {
+		const choices = []
+		for (let array = 1; array <= 4; array++) {
+			const name = self?.beamControlArrayName?.[array]
+			const label = name && name.trim() !== '' ? `Beam Control Array ${array} (${name})` : `Beam Control Array ${array}`
+			choices.push({ id: String(array), label })
+		}
+		return choices
+	}
 
 	/**
 	 * Build LMBC status preview
@@ -206,8 +99,10 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		return '-- No error message --'
 	}
 
-	// Build phase options for line array - one option per speaker with phases
+	// Build phase options for line array - create options for each possible combination
 	const lineArrayPhaseOptions = []
+
+	// First, create phase options for non-mixed arrays (or same speaker mixed arrays)
 	for (const speaker of productIntegrationSpeakers.values()) {
 		if (!speaker.phases || speaker.phases.length === 0) continue
 
@@ -221,7 +116,58 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			label: 'Phase Curve',
 			default: speaker.phases[0]?.id || '',
 			choices: phaseChoices,
-			isVisible: new Function('options', `return options.primary_speaker === ${safeSpeakerJson};`),
+			isVisible: new Function('options', `
+				if (options.primary_speaker !== ${safeSpeakerJson}) return false;
+				// Only show this if mixed array is disabled OR secondary speaker is same as primary
+				if (options.mixed_array === true) {
+					const primarySpeaker = String(options.primary_speaker || '');
+					const secondaryOptionId = 'secondary_for_' + primarySpeaker;
+					const selectedSecondary = options[secondaryOptionId];
+					// Only show if secondary matches primary (same speaker)
+					return selectedSecondary === primarySpeaker;
+				}
+				// Not a mixed array, show normal phases
+				return true;
+			`),
+		})
+	}
+
+	// Second, create phase options for mixed arrays with different speakers
+	for (const [primaryKey, combo] of Object.entries(lineArrayCombinations)) {
+		if (!combo || !combo.secondary) continue
+
+		const secondaryKey = combo.secondary
+		if (primaryKey === secondaryKey) continue // Skip if same speaker
+
+		const primarySpeaker = productIntegrationSpeakers.get(primaryKey)
+		const secondarySpeaker = productIntegrationSpeakers.get(secondaryKey)
+
+		if (!primarySpeaker?.phases || !secondarySpeaker?.phases) continue
+
+		// Calculate intersection of phases
+		const secondaryPhaseIds = new Set(secondarySpeaker.phases.map(p => p.id))
+		const intersectionPhases = primarySpeaker.phases
+			.filter(p => secondaryPhaseIds.has(p.id))
+			.map(p => ({ id: p.id, label: p.label }))
+
+		if (intersectionPhases.length === 0) continue // No common phases
+
+		const safePrimaryJson = JSON.stringify(primaryKey)
+		const safeSecondaryJson = JSON.stringify(secondaryKey)
+
+		lineArrayPhaseOptions.push({
+			type: 'dropdown',
+			id: `phase_for_${primaryKey}_mixed_${secondaryKey}`,
+			label: 'Phase Curve',
+			default: intersectionPhases[0]?.id || '',
+			choices: intersectionPhases,
+			isVisible: new Function('options', `
+				if (options.primary_speaker !== ${safePrimaryJson}) return false;
+				if (options.mixed_array !== true) return false;
+				const secondaryOptionId = 'secondary_for_' + ${safePrimaryJson};
+				const selectedSecondary = options[secondaryOptionId];
+				return selectedSecondary === ${safeSecondaryJson};
+			`),
 		})
 	}
 
@@ -405,30 +351,15 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
-				choices: [
-					{ id: '0', label: 'None (Unassigned)' },
-					{ id: '1', label: 'Link Group 1' },
-					{ id: '2', label: 'Link Group 2' },
-					{ id: '3', label: 'Link Group 3' },
-					{ id: '4', label: 'Link Group 4' },
-					{ id: '5', label: 'Link Group 5' },
-					{ id: '6', label: 'Link Group 6' },
-					{ id: '7', label: 'Link Group 7' },
-					{ id: '8', label: 'Link Group 8' },
-				],
+				choices: getOutputLinkGroupChoices(),
+				tooltip: 'Assigning to a link group (1-8) will automatically enable it',
 			},
 			{
-				type: 'checkbox',
-				id: 'link_group_enable',
-				label: 'Enable the selected Output Link Group',
-				default: true,
-				isVisible: (o) => o.link_group !== '0',
-			},
-			{
-				type: 'checkbox',
-				id: 'reset_line_array',
-				label: 'Reset channels to factory defaults before applying',
-				default: false,
+				type: 'textinput',
+				id: 'channel_prefix',
+				label: 'Channel Name Prefix',
+				default: 'Output',
+				tooltip: 'Prefix for automatic channel naming (e.g., "Main" will create "Main 1-2", "Main 3-4", etc.)',
 			},
 
 			// ===== LMBC OPTIONS =====
@@ -438,21 +369,47 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'Enable LMBC (Low-Mid Beam Control)',
 				default: false,
 				tooltip: 'Enable Low-Mid Beam Control for this line array',
-				isVisible: (o) => o.primary_speaker !== 'M1D',
+				isVisible: (o) => {
+					// Must have a valid primary speaker (not empty, not M1D)
+					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
+						return false;
+					}
+					// If mixed array is enabled, check if secondary speaker matches primary
+					if (o.mixed_array === true) {
+						const primarySpeaker = String(o.primary_speaker || '');
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
+						const selectedSecondary = o[secondaryOptionId];
+						// Only show LMBC if secondary speaker is the same as primary
+						return selectedSecondary === primarySpeaker;
+					}
+					// Not a mixed array, show LMBC
+					return true;
+				},
 			},
 			{
 				type: 'dropdown',
 				id: 'lmbc_array_index',
 				label: 'LMBC: Beam Control Array',
 				default: '1',
-				choices: [
-					{ id: '1', label: 'Beam Control Array 1' },
-					{ id: '2', label: 'Beam Control Array 2' },
-					{ id: '3', label: 'Beam Control Array 3' },
-					{ id: '4', label: 'Beam Control Array 4' },
-				],
+				choices: getBeamControlArrayChoices(),
 				tooltip: 'Select which beam control array to configure (1-4)',
-				isVisible: (o) => o.enable_lmbc === true && o.primary_speaker !== 'M1D',
+				isVisible: (o) => {
+					if (o.enable_lmbc !== true) return false;
+					// Must have a valid primary speaker (not empty, not M1D)
+					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
+						return false;
+					}
+					// If mixed array is enabled, check if secondary speaker matches primary
+					if (o.mixed_array === true) {
+						const primarySpeaker = String(o.primary_speaker || '');
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
+						const selectedSecondary = o[secondaryOptionId];
+						// Only show LMBC if secondary speaker is the same as primary
+						return selectedSecondary === primarySpeaker;
+					}
+					// Not a mixed array, show LMBC
+					return true;
+				},
 			},
 			{
 				type: 'number',
@@ -462,7 +419,23 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 10,
 				max: 99,
 				tooltip: 'Total beam angle in degrees (10-99)',
-				isVisible: (o) => o.enable_lmbc === true && o.primary_speaker !== 'M1D',
+				isVisible: (o) => {
+					if (o.enable_lmbc !== true) return false;
+					// Must have a valid primary speaker (not empty, not M1D)
+					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
+						return false;
+					}
+					// If mixed array is enabled, check if secondary speaker matches primary
+					if (o.mixed_array === true) {
+						const primarySpeaker = String(o.primary_speaker || '');
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
+						const selectedSecondary = o[secondaryOptionId];
+						// Only show LMBC if secondary speaker is the same as primary
+						return selectedSecondary === primarySpeaker;
+					}
+					// Not a mixed array, show LMBC
+					return true;
+				},
 			},
 			{
 				type: 'dropdown',
@@ -474,7 +447,23 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '1', label: 'Steer Up' },
 				],
 				tooltip: 'Beam control type: Spread or Steer Up',
-				isVisible: (o) => o.enable_lmbc === true && o.primary_speaker !== 'M1D',
+				isVisible: (o) => {
+					if (o.enable_lmbc !== true) return false;
+					// Must have a valid primary speaker (not empty, not M1D)
+					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
+						return false;
+					}
+					// If mixed array is enabled, check if secondary speaker matches primary
+					if (o.mixed_array === true) {
+						const primarySpeaker = String(o.primary_speaker || '');
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
+						const selectedSecondary = o[secondaryOptionId];
+						// Only show LMBC if secondary speaker is the same as primary
+						return selectedSecondary === primarySpeaker;
+					}
+					// Not a mixed array, show LMBC
+					return true;
+				},
 			},
 			{
 				type: 'number',
@@ -484,14 +473,46 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 1,
 				max: 32,
 				tooltip: 'First element number in the array (1-32)',
-				isVisible: (o) => o.enable_lmbc === true && o.primary_speaker !== 'M1D',
+				isVisible: (o) => {
+					if (o.enable_lmbc !== true) return false;
+					// Must have a valid primary speaker (not empty, not M1D)
+					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
+						return false;
+					}
+					// If mixed array is enabled, check if secondary speaker matches primary
+					if (o.mixed_array === true) {
+						const primarySpeaker = String(o.primary_speaker || '');
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
+						const selectedSecondary = o[secondaryOptionId];
+						// Only show LMBC if secondary speaker is the same as primary
+						return selectedSecondary === primarySpeaker;
+					}
+					// Not a mixed array, show LMBC
+					return true;
+				},
 			},
 			{
 				type: 'static-text',
 				id: 'lmbc_status_info',
 				label: 'LMBC Status',
 				value: lmbcStatusPreview(1),
-				isVisible: (o) => o.enable_lmbc === true && o.primary_speaker !== 'M1D',
+				isVisible: (o) => {
+					if (o.enable_lmbc !== true) return false;
+					// Must have a valid primary speaker (not empty, not M1D)
+					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
+						return false;
+					}
+					// If mixed array is enabled, check if secondary speaker matches primary
+					if (o.mixed_array === true) {
+						const primarySpeaker = String(o.primary_speaker || '');
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
+						const selectedSecondary = o[secondaryOptionId];
+						// Only show LMBC if secondary speaker is the same as primary
+						return selectedSecondary === primarySpeaker;
+					}
+					// Not a mixed array, show LMBC
+					return true;
+				},
 			},
 		],
 		callback: async (e) => {
@@ -507,8 +528,46 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				const secondarySpeaker = String(e.options[secondarySpeakerOptionId] || '')
 				const secondaryElements = Number(e.options.secondary_elements) || 0
 
+				// If no primary speaker is selected, reset delay integration type and allow naming
 				if (!primarySpeaker) {
-					self.log?.('warn', 'Line Array Design: No primary speaker selected')
+					const channelPrefix = String(e.options?.channel_prefix || '').trim()
+
+					const numOutputs = Math.ceil(primaryElements / elementsPerOutput)
+					for (let i = 0; i < numOutputs; i++) {
+						const outputNum = startOutput + i
+						if (outputNum > NUM_OUTPUTS) break
+
+						// Reset delay integration type to 1
+						self._cmdSendLine(`/processing/output/${outputNum}/delay_integration/type=1`)
+
+						// Calculate element range for naming
+						const firstElement = i * elementsPerOutput + 1
+						const lastElement = Math.min((i + 1) * elementsPerOutput, primaryElements)
+
+						// Apply naming with prefix or default
+						let channelName = ''
+						if (channelPrefix === 'Output' || !channelPrefix) {
+							// Use default naming "Output X"
+							channelName = `Output ${outputNum}`
+						} else {
+							// Use custom prefix with element numbers
+							if (elementsPerOutput === 1) {
+								channelName = `${channelPrefix} ${firstElement}`
+							} else {
+								channelName = `${channelPrefix} ${firstElement}-${lastElement}`
+							}
+						}
+
+						self._cmdSendLine(`/device/output/${outputNum}/name='${channelName}'`)
+						// Update local state
+						if (!self.outputName) self.outputName = {}
+						self.outputName[outputNum] = channelName
+						if (typeof self.setVariableValues === 'function') {
+							self.setVariableValues({ [`output_${outputNum}_name`]: channelName })
+						}
+					}
+
+					self.log?.('info', `Line Array Design: Reset delay integration type and applied channel naming to ${numOutputs} outputs starting from Output ${startOutput}`)
 					return
 				}
 
@@ -529,13 +588,11 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 				const commands = []
 
-				// Check if factory reset is enabled
-				const shouldReset = e.options.reset_line_array === true
-
 				// Calculate delay compensation for mixed array using combinations data
+				// Only apply delay when primary and secondary speakers are DIFFERENT
 				let primaryDelayMs = 0
 				let secondaryDelayMs = 0
-				if (mixedArray && secondarySpeaker) {
+				if (mixedArray && secondarySpeaker && primarySpeaker !== secondarySpeaker) {
 					const combinations = STARTING_POINTS_SOURCE.combinations || {}
 					const combo = combinations[primarySpeaker]
 					if (combo && combo.secondary === secondarySpeaker) {
@@ -558,8 +615,14 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 				// Helper function to get product integration type ID and starting points
 				const getSpeakerSettings = (speakerKey, isPrimary) => {
-					// Get phase from the phase option for the primary speaker (shared for whole array)
-					const phaseOptionId = `phase_for_${primarySpeaker}`
+					// Get phase from the correct phase option based on mixed array configuration
+					let phaseOptionId = `phase_for_${primarySpeaker}`
+
+					// If mixed array with different speakers, use the combined option ID
+					if (mixedArray && secondarySpeaker && primarySpeaker !== secondarySpeaker) {
+						phaseOptionId = `phase_for_${primarySpeaker}_mixed_${secondarySpeaker}`
+					}
+
 					const requestedPhase = String(e.options?.[phaseOptionId] || '')
 
 					let typeId = null
@@ -627,18 +690,11 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						lastElement = Math.min((i + 1) * elementsPerOutput, primaryElements)
 					} else {
 						const secondaryIndex = i - primaryOutputs
-						firstElement = secondaryIndex * elementsPerOutput + 1
-						lastElement = Math.min((secondaryIndex + 1) * elementsPerOutput, secondaryElements)
+						// Continue element numbering from primary elements
+						firstElement = primaryElements + (secondaryIndex * elementsPerOutput) + 1
+						lastElement = primaryElements + Math.min((secondaryIndex + 1) * elementsPerOutput, secondaryElements)
 					}
 					const elementsOnThisOutput = lastElement - firstElement + 1
-
-					// Apply factory reset if checkbox is enabled
-					if (shouldReset) {
-						for (const resetCmd of FACTORY_RESET_COMMANDS) {
-							const cmd = resetCmd.replace(/\{ch\}/g, outputNum)
-							self._cmdSendLine(cmd)
-						}
-					}
 
 					// Apply product integration type
 					if (settings?.typeId) {
@@ -677,6 +733,30 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						}
 					}
 
+					// Apply channel name with prefix
+					const channelPrefix = String(e.options?.channel_prefix || '').trim()
+					let channelName = ''
+
+					if (channelPrefix === 'Output' || !channelPrefix) {
+						// Use default naming "Output X"
+						channelName = `Output ${outputNum}`
+					} else {
+						// Use custom prefix with element numbers
+						if (elementsPerOutput === 1) {
+							channelName = `${channelPrefix} ${firstElement}`
+						} else {
+							channelName = `${channelPrefix} ${firstElement}-${lastElement}`
+						}
+					}
+
+					self._cmdSendLine(`/device/output/${outputNum}/name='${channelName}'`)
+					// Update local state
+					if (!self.outputName) self.outputName = {}
+					self.outputName[outputNum] = channelName
+					if (typeof self.setVariableValues === 'function') {
+						self.setVariableValues({ [`output_${outputNum}_name`]: channelName })
+					}
+
 					const startingPointInfo = settings?.startingPointTitle ? ` | ${settings.startingPointTitle}` : ''
 					const delayInfo = delayMs > 0 ? ` | ${delayMs.toFixed(2)}ms delay` : ''
 					self.log?.(
@@ -685,13 +765,14 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					)
 				}
 
-				// Apply link group bypass state if link group was assigned
+				// Apply link group assignment/removal
 				const linkGroup = String(e.options?.link_group || '0')
 				if (linkGroup !== '0') {
+					// Assign and enable the link group
 					const groupNum = Number(linkGroup)
 					if (groupNum >= 1 && groupNum <= 8) {
-						// Enable = not bypassed (false), Disable = bypassed (true)
-						const shouldBypass = e.options?.link_group_enable !== true
+						// Automatically enable the link group (not bypassed)
+						const shouldBypass = false
 						self._cmdSendLine(`/device/output_link_group/${groupNum}/bypass='${shouldBypass}'`)
 						// Update local state
 						if (!self.outputLinkGroupBypass) self.outputLinkGroupBypass = {}
@@ -700,9 +781,23 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 							self.checkFeedbacks('output_link_group_bypassed')
 							self.checkFeedbacks('output_link_group_assigned')
 						}
-						const groupStatus = shouldBypass ? 'Disabled (Bypassed)' : 'Enabled'
-						self.log?.('info', `Line Array Design: Link Group ${groupNum} - ${groupStatus}`)
+						self.log?.('info', `Line Array Design: Link Group ${groupNum} - Enabled`)
 					}
+				} else {
+					// Link group is set to None (0) - remove link group assignment from affected outputs
+					for (let i = 0; i < numOutputs; i++) {
+						const outputNum = startOutput + i
+						if (outputNum > NUM_OUTPUTS) break
+
+						self._cmdSendLine(`/device/output/${outputNum}/output_link_group='0'`)
+						// Update local state
+						if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
+						self.outputLinkGroupAssign[outputNum] = 0
+					}
+					if (typeof self.checkFeedbacks === 'function') {
+						self.checkFeedbacks('output_link_group_assigned')
+					}
+					self.log?.('info', `Line Array Design: Removed link group assignment from ${numOutputs} outputs starting from Output ${startOutput}`)
 				}
 
 				// Send commands
@@ -750,10 +845,34 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						self._cmdSendLine(cmd)
 					}
 
+					// Set beam control array name based on channel prefix
+					const channelPrefix = String(e.options?.channel_prefix || '').trim()
+					if (channelPrefix && channelPrefix !== 'Output') {
+						// Use the custom prefix as the array name
+						self._cmdSendLine(`/processing/beam_control_array/${arrayIndex}/name='${channelPrefix}'`)
+						// Update local state
+						if (!self.beamControlArrayName) self.beamControlArrayName = {}
+						self.beamControlArrayName[arrayIndex] = channelPrefix
+						if (typeof self.setVariableValues === 'function') {
+							self.setVariableValues({ [`beam_control_array_${arrayIndex}_name`]: channelPrefix })
+						}
+					} else {
+						// Reset to default name "Array X"
+						const defaultName = `Array ${arrayIndex}`
+						self._cmdSendLine(`/processing/beam_control_array/${arrayIndex}/name='${defaultName}'`)
+						// Update local state
+						if (!self.beamControlArrayName) self.beamControlArrayName = {}
+						self.beamControlArrayName[arrayIndex] = defaultName
+						if (typeof self.setVariableValues === 'function') {
+							self.setVariableValues({ [`beam_control_array_${arrayIndex}_name`]: defaultName })
+						}
+					}
+
 					const lmbcTypeLabel = controlType === '1' ? 'Steer Up' : 'Spread'
+					const arrayNameInfo = channelPrefix && channelPrefix !== 'Output' ? ` "${channelPrefix}"` : ''
 					self.log?.(
 						'info',
-						`Line Array Design: LMBC Array ${arrayIndex} configured - Active, ${lmbcTypeLabel}, ${beamAngle}° beam angle, ${totalElements} elements starting at element ${lmbcStartingElement}`,
+						`Line Array Design: LMBC Array ${arrayIndex}${arrayNameInfo} configured - Active, ${lmbcTypeLabel}, ${beamAngle}° beam angle, ${totalElements} elements starting at element ${lmbcStartingElement}`,
 					)
 				}
 
@@ -782,12 +901,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'array_index',
 				label: 'Beam Control Array',
 				default: '1',
-				choices: [
-					{ id: '1', label: 'Beam Control Array 1' },
-					{ id: '2', label: 'Beam Control Array 2' },
-					{ id: '3', label: 'Beam Control Array 3' },
-					{ id: '4', label: 'Beam Control Array 4' },
-				],
+				choices: getBeamControlArrayChoices(),
 				tooltip: 'Select which beam control array to configure (1-4)',
 			},
 			{

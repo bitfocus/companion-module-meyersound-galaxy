@@ -135,12 +135,19 @@ module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUT
 			variableId: `input_link_group_${group}_bypass`,
 			name: `Input Link Group ${group} bypass`,
 		})
+		vars.push({
+			variableId: `input_link_group_${group}_name`,
+			name: `Input Link Group ${group} name`,
+		})
 
 		// Backfill value if available
 		if (self?.inputLinkGroupBypass?.[group] !== undefined) {
 			const bypass = self.inputLinkGroupBypass[group]
 			vals[`input_link_group_${group}_bypass`] =
 				typeof bypass === 'boolean' ? (bypass ? 'Bypassed' : 'Enabled') : String(bypass ?? 'Enabled')
+		}
+		if (self?.inputLinkGroupName?.[group] !== undefined) {
+			vals[`input_link_group_${group}_name`] = String(self.inputLinkGroupName[group])
 		}
 	}
 
@@ -370,12 +377,19 @@ module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUT
 			variableId: `output_link_group_${group}_bypass`,
 			name: `Output Link Group ${group} bypass`,
 		})
+		vars.push({
+			variableId: `output_link_group_${group}_name`,
+			name: `Output Link Group ${group} name`,
+		})
 
 		// Backfill value if available
 		if (self?.outputLinkGroupBypass?.[group] !== undefined) {
 			const bypass = self.outputLinkGroupBypass[group]
 			vals[`output_link_group_${group}_bypass`] =
 				typeof bypass === 'boolean' ? (bypass ? 'Bypassed' : 'Enabled') : String(bypass ?? 'Enabled')
+		}
+		if (self?.outputLinkGroupName?.[group] !== undefined) {
+			vals[`output_link_group_${group}_name`] = String(self.outputLinkGroupName[group])
 		}
 	}
 
@@ -603,6 +617,7 @@ module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUT
 		vars.push({ variableId: `lmbc_${arrayIdx}_error_code`, name: `LMBC Array ${arrayIdx} Error Code` })
 		vars.push({ variableId: `lmbc_${arrayIdx}_error_status`, name: `LMBC Array ${arrayIdx} Error Status` })
 		vars.push({ variableId: `lmbc_${arrayIdx}_error_string`, name: `LMBC Array ${arrayIdx} Error String` })
+		vars.push({ variableId: `beam_control_array_${arrayIdx}_name`, name: `Beam Control Array ${arrayIdx} name` })
 
 		// Backfill beam control status if available
 		if (self?.beamControlStatus?.[arrayIdx]) {
@@ -616,6 +631,10 @@ module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUT
 			if (status.errorString !== undefined) {
 				vals[`lmbc_${arrayIdx}_error_string`] = status.errorString
 			}
+		}
+		// Backfill beam control array name if available
+		if (self?.beamControlArrayName?.[arrayIdx] !== undefined) {
+			vals[`beam_control_array_${arrayIdx}_name`] = String(self.beamControlArrayName[arrayIdx])
 		}
 	}
 
