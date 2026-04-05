@@ -7,6 +7,7 @@ const UpdateVariableDefinitions = require('./variables')
 const UpgradeScripts = require('./upgrades')
 const UpdatePresets = require('./presets')
 const { STARTING_POINTS_SOURCE, PRODUCT_INTEGRATION_DATA } = require('./actions-data')
+const { SNAPSHOT_MAX, displayBrightnessLabel, displayColorLabel } = require('./helpers')
 
 // Protocol constants
 const EOL_SPLIT = /\r\n|\n|\r/ // Line ending split pattern for incoming data
@@ -43,22 +44,6 @@ const UI_REFRESH_DEBOUNCE_MS = 150 // Debounce delay for actions/feedbacks/varia
 const PRESET_REFRESH_DEBOUNCE_MS = 250 // Debounce delay for preset refresh (slightly longer)
 const PREV_GAIN_CAPTURE_WINDOW_MS = 300 // Window to capture "previous" gain before SET operation
 
-// Display labels
-const DISPLAY_BRIGHTNESS_LABELS = {
-	0: 'Level 0 (Dim)',
-	1: 'Level 1 (Normal)',
-	2: 'Level 2 (Bright)',
-}
-
-const DISPLAY_COLOR_LABELS = {
-	0: 'Green',
-	1: 'Blue',
-	2: 'Yellow',
-	3: 'Cyan',
-	4: 'Magenta',
-	5: 'Red',
-}
-
 // ---- Output filter types ----
 const FILTER_TYPE_LABELS = {
 	1: 'Butterworth 6dB',
@@ -82,7 +67,6 @@ function formatFilterType(id) {
 }
 
 // ---- Snapshots ----
-const SNAPSHOT_MAX = 255
 const SNAPSHOT_FIELDS = ['comment', 'created', 'last_updated', 'locked', 'modified', 'name']
 const SNAPSHOT_ACTIVE_FIELDS = ['comment', 'created', 'id', 'last_updated', 'locked', 'modified', 'name']
 
@@ -162,13 +146,13 @@ class ModuleInstance extends InstanceBase {
 		this.subBuf = ''
 		this._reconnectAttempts = 0
 		this._reconnectDelay = RECONNECT_DELAY_MS
+		this._destroyed = false
 
 		// meters (dBFS)
 		this.inputMeter = {} // { ch: number }
 		this.outputMeter = {} // { ch: number }
 		this.matrixInMeter = {} // { idx: number }  // matrix input meters 1..32
 
-		// ✅ FIX: Initialize meter batching
 		this._meterRateMs = METER_BATCH_INTERVAL_MS
 		this._meterPending = { in: {}, out: {}, mxin: {} }
 		this._meterFlushTimer = null
@@ -265,7 +249,6 @@ class ModuleInstance extends InstanceBase {
 		}
 		this._prevCaptureWindows = new Map()
 
-		// ✅ FIX: Initialize refresh timers
 		this._actionsRefreshTimer = null
 		this._feedbacksRefreshTimer = null
 		this._variablesRefreshTimer = null
@@ -318,6 +301,7 @@ class ModuleInstance extends InstanceBase {
 
 	async init(config) {
 		this.config = config
+		this._destroyed = false
 		this.updateStatus(InstanceStatus.Ok, 'Idle')
 
 		this.updateActions()
@@ -335,6 +319,7 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	async destroy() {
+		this._destroyed = true
 		this._stopAllFades()
 		this._stopAllInputFades()
 		this._stopAllOutputFades()
@@ -343,7 +328,6 @@ class ModuleInstance extends InstanceBase {
 
 		this._disableVirtualDiscovery()
 
-		// ✅ FIX: Clean up all timers
 		clearTimeout(this._actionsRefreshTimer)
 		this._actionsRefreshTimer = null
 		clearTimeout(this._feedbacksRefreshTimer)
@@ -352,6 +336,8 @@ class ModuleInstance extends InstanceBase {
 		this._variablesRefreshTimer = null
 		clearTimeout(this._meterFlushTimer)
 		this._meterFlushTimer = null
+		clearTimeout(this._presetsRefreshTimer)
+		this._presetsRefreshTimer = null
 
 		try {
 			this.subSock?.destroy()
@@ -381,7 +367,6 @@ class ModuleInstance extends InstanceBase {
 
 		this._disableVirtualDiscovery()
 
-		// ✅ FIX: Clean up timers on config update
 		clearTimeout(this._actionsRefreshTimer)
 		this._actionsRefreshTimer = null
 		clearTimeout(this._feedbacksRefreshTimer)
@@ -490,6 +475,7 @@ class ModuleInstance extends InstanceBase {
 		this.subBuf = ''
 
 		const reconnect = () => {
+			if (this._destroyed) return
 			if (this.subSock === sock) this.subSock = null
 			this._logHistoryFetched = false
 
@@ -907,11 +893,15 @@ class ModuleInstance extends InstanceBase {
 		if (mute && typeof mute.value === 'boolean') {
 			if (mute.kind === 'input') this._applyInMute(mute.ch, mute.value)
 			else if (mute.kind === 'output') this._applyOutMute(mute.ch, mute.value)
+			return
 		}
 
-		// input/output gains
+		// input gain
 		const ig = this._parseInputGain(line)
-		if (ig) this._applyInputGain(ig.ch, ig.value)
+		if (ig) {
+			this._applyInputGain(ig.ch, ig.value)
+			return
+		}
 
 		// input delay (samples)
 		const id = this._parseInputDelay(line)
@@ -962,7 +952,6 @@ class ModuleInstance extends InstanceBase {
 			return
 		}
 
-		// ✅ FIX: Move feedback check inside the if block
 		const omtr = this._parseOutputMeter(line)
 		if (omtr) {
 			this._applyOutputMeter(omtr.ch, omtr.value)
@@ -971,7 +960,10 @@ class ModuleInstance extends InstanceBase {
 		}
 
 		const og = this._parseOutputGain(line)
-		if (og) this._applyOutputGain(og.ch, og.value)
+		if (og) {
+			this._applyOutputGain(og.ch, og.value)
+			return
+		}
 
 		// output delay (samples)
 		const od = this._parseOutputDelay(line)
@@ -1040,7 +1032,10 @@ class ModuleInstance extends InstanceBase {
 
 		// matrix gains
 		const mg = this._parseMatrixGain(line)
-		if (mg) this._applyMatrixGain(mg.mi, mg.mo, mg.value)
+		if (mg) {
+			this._applyMatrixGain(mg.mi, mg.mo, mg.value)
+			return
+		}
 
 		// matrix delay
 		const md = this._parseMatrixDelay(line)
@@ -2364,20 +2359,20 @@ class ModuleInstance extends InstanceBase {
 			// U-Shaping variables
 			vals[`input_${ch}_ushaping_bypass`] = ''
 			for (let band = 1; band <= 5; band++) {
-				vals[`input_${ch}_ushaping_band${band}_gain`] = ''
+				vals[`input_${ch}_ushaping_band_${band}_gain`] = ''
 				if (band <= 4) {
-					vals[`input_${ch}_ushaping_band${band}_frequency`] = ''
+					vals[`input_${ch}_ushaping_band_${band}_frequency`] = ''
 				}
-				vals[`input_${ch}_ushaping_band${band}_slope`] = ''
+				vals[`input_${ch}_ushaping_band_${band}_slope`] = ''
 			}
 
 			// Parametric EQ variables
 			vals[`input_${ch}_eq_bypass`] = ''
 			for (let band = 1; band <= 5; band++) {
-				vals[`input_${ch}_eq_band${band}_gain`] = ''
-				vals[`input_${ch}_eq_band${band}_frequency`] = ''
-				vals[`input_${ch}_eq_band${band}_bandwidth`] = ''
-				vals[`input_${ch}_eq_band${band}_bypass`] = ''
+				vals[`input_${ch}_eq_band_${band}_gain`] = ''
+				vals[`input_${ch}_eq_band_${band}_frequency`] = ''
+				vals[`input_${ch}_eq_band_${band}_bandwidth`] = ''
+				vals[`input_${ch}_eq_band_${band}_bypass`] = ''
 			}
 		}
 		for (let ch = 1; ch <= NUM_OUTPUTS; ch++) {
@@ -2394,9 +2389,28 @@ class ModuleInstance extends InstanceBase {
 			vals[`output_${ch}_lowpass_frequency`] = '---'
 			vals[`output_${ch}_lowpass_type`] = '---'
 			for (let band = 1; band <= 3; band++) {
-				vals[`output_${ch}_allpass${band}`] = 'OFF'
-				vals[`output_${ch}_allpass${band}_frequency`] = '---'
-				vals[`output_${ch}_allpass${band}_q`] = '---'
+				vals[`output_${ch}_allpass_${band}`] = 'OFF'
+				vals[`output_${ch}_allpass_${band}_frequency`] = '---'
+				vals[`output_${ch}_allpass_${band}_q`] = '---'
+			}
+
+			// U-Shaping variables
+			vals[`output_${ch}_ushaping_bypass`] = ''
+			for (let band = 1; band <= 5; band++) {
+				vals[`output_${ch}_ushaping_band_${band}_gain`] = ''
+				if (band <= 4) {
+					vals[`output_${ch}_ushaping_band_${band}_frequency`] = ''
+				}
+				vals[`output_${ch}_ushaping_band_${band}_slope`] = ''
+			}
+
+			// Parametric EQ variables
+			vals[`output_${ch}_eq_bypass`] = ''
+			for (let band = 1; band <= 5; band++) {
+				vals[`output_${ch}_eq_band_${band}_gain`] = ''
+				vals[`output_${ch}_eq_band_${band}_frequency`] = ''
+				vals[`output_${ch}_eq_band_${band}_bandwidth`] = ''
+				vals[`output_${ch}_eq_band_${band}_bypass`] = ''
 			}
 		}
 		for (let mi = 1; mi <= MATRIX_INPUTS; mi++) {
@@ -2861,11 +2875,9 @@ class ModuleInstance extends InstanceBase {
 		this.setVariableValues({ [varId]: value })
 	}
 	_getDisplayPreferenceLabel(key, value) {
-		const str = value == null ? '' : String(value)
-		if (str === '') return '---'
-		if (key === 'brightness') return DISPLAY_BRIGHTNESS_LABELS[str] || `Level ${str}`
-		if (key === 'display_color') return DISPLAY_COLOR_LABELS[str] || `Color ${str}`
-		return str
+		if (key === 'brightness') return displayBrightnessLabel(value)
+		if (key === 'display_color') return displayColorLabel(value)
+		return value == null ? '' : String(value)
 	}
 	_applyDisplayPreference(key, value) {
 		if (!key) return
@@ -3049,7 +3061,7 @@ class ModuleInstance extends InstanceBase {
 			const state = !!value
 			if (this.inputUShaping[ch][band].band_bypass === state) return
 			this.inputUShaping[ch][band].band_bypass = state
-			this.setVariableValues({ [`input_${ch}_ushaping_band${band}_bypass`]: state ? 'ON' : 'OFF' })
+			this.setVariableValues({ [`input_${ch}_ushaping_band_${band}_bypass`]: state ? 'ON' : 'OFF' })
 			return
 		}
 
@@ -3062,11 +3074,11 @@ class ModuleInstance extends InstanceBase {
 
 		const vars = {}
 		if (param === 'gain') {
-			vars[`input_${ch}_ushaping_band${band}_gain`] = val.toFixed(1)
+			vars[`input_${ch}_ushaping_band_${band}_gain`] = val.toFixed(1)
 		} else if (param === 'frequency') {
-			vars[`input_${ch}_ushaping_band${band}_frequency`] = Math.round(val).toString()
+			vars[`input_${ch}_ushaping_band_${band}_frequency`] = Math.round(val).toString()
 		} else if (param === 'slope') {
-			vars[`input_${ch}_ushaping_band${band}_slope`] = Math.round(val).toString()
+			vars[`input_${ch}_ushaping_band_${band}_slope`] = Math.round(val).toString()
 		}
 
 		if (Object.keys(vars).length > 0) {
@@ -3098,7 +3110,7 @@ class ModuleInstance extends InstanceBase {
 			const state = !!value
 			if (this.inputEQ[ch][band].band_bypass === state) return
 			this.inputEQ[ch][band].band_bypass = state
-			this.setVariableValues({ [`input_${ch}_eq_band${band}_bypass`]: state ? 'ON' : 'OFF' })
+			this.setVariableValues({ [`input_${ch}_eq_band_${band}_bypass`]: state ? 'ON' : 'OFF' })
 			return
 		}
 
@@ -3111,13 +3123,13 @@ class ModuleInstance extends InstanceBase {
 
 		const vars = {}
 		if (param === 'gain') {
-			vars[`input_${ch}_eq_band${band}_gain`] = val.toFixed(1)
+			vars[`input_${ch}_eq_band_${band}_gain`] = val.toFixed(1)
 		} else if (param === 'frequency') {
 			// 0.01 Hz precision below 100 Hz, 1 Hz above
 			const freqStr = val < 100 ? val.toFixed(2) : Math.round(val).toString()
-			vars[`input_${ch}_eq_band${band}_frequency`] = freqStr
+			vars[`input_${ch}_eq_band_${band}_frequency`] = freqStr
 		} else if (param === 'bandwidth') {
-			vars[`input_${ch}_eq_band${band}_bandwidth`] = val.toFixed(2)
+			vars[`input_${ch}_eq_band_${band}_bandwidth`] = val.toFixed(2)
 		}
 
 		if (Object.keys(vars).length > 0) {
@@ -3149,7 +3161,7 @@ class ModuleInstance extends InstanceBase {
 			const state = !!value
 			if (this.outputUShaping[ch][band].band_bypass === state) return
 			this.outputUShaping[ch][band].band_bypass = state
-			this.setVariableValues({ [`output_${ch}_ushaping_band${band}_bypass`]: state ? 'ON' : 'OFF' })
+			this.setVariableValues({ [`output_${ch}_ushaping_band_${band}_bypass`]: state ? 'ON' : 'OFF' })
 			return
 		}
 
@@ -3162,11 +3174,11 @@ class ModuleInstance extends InstanceBase {
 
 		const vars = {}
 		if (param === 'gain') {
-			vars[`output_${ch}_ushaping_band${band}_gain`] = val.toFixed(1)
+			vars[`output_${ch}_ushaping_band_${band}_gain`] = val.toFixed(1)
 		} else if (param === 'frequency') {
-			vars[`output_${ch}_ushaping_band${band}_frequency`] = Math.round(val).toString()
+			vars[`output_${ch}_ushaping_band_${band}_frequency`] = Math.round(val).toString()
 		} else if (param === 'slope') {
-			vars[`output_${ch}_ushaping_band${band}_slope`] = Math.round(val).toString()
+			vars[`output_${ch}_ushaping_band_${band}_slope`] = Math.round(val).toString()
 		}
 
 		if (Object.keys(vars).length > 0) {
@@ -3198,7 +3210,7 @@ class ModuleInstance extends InstanceBase {
 			const state = !!value
 			if (this.outputEQ[ch][band].band_bypass === state) return
 			this.outputEQ[ch][band].band_bypass = state
-			this.setVariableValues({ [`output_${ch}_eq_band${band}_bypass`]: state ? 'ON' : 'OFF' })
+			this.setVariableValues({ [`output_${ch}_eq_band_${band}_bypass`]: state ? 'ON' : 'OFF' })
 			return
 		}
 
@@ -3211,13 +3223,13 @@ class ModuleInstance extends InstanceBase {
 
 		const vars = {}
 		if (param === 'gain') {
-			vars[`output_${ch}_eq_band${band}_gain`] = val.toFixed(1)
+			vars[`output_${ch}_eq_band_${band}_gain`] = val.toFixed(1)
 		} else if (param === 'frequency') {
 			// 0.01 Hz precision below 100 Hz, 1 Hz above
 			const freqStr = val < 100 ? val.toFixed(2) : Math.round(val).toString()
-			vars[`output_${ch}_eq_band${band}_frequency`] = freqStr
+			vars[`output_${ch}_eq_band_${band}_frequency`] = freqStr
 		} else if (param === 'bandwidth') {
-			vars[`output_${ch}_eq_band${band}_bandwidth`] = val.toFixed(2)
+			vars[`output_${ch}_eq_band_${band}_bandwidth`] = val.toFixed(2)
 		}
 
 		if (Object.keys(vars).length > 0) {

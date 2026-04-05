@@ -1,18 +1,4 @@
-const DISPLAY_NOCHANGE = 'nochange'
-const SNAPSHOT_MAX = 255
-const DISPLAY_BRIGHTNESS_CHOICES = [
-	{ id: '0', label: 'Level 0 (Dim)' },
-	{ id: '1', label: 'Level 1 (Normal)' },
-	{ id: '2', label: 'Level 2 (Bright)' },
-]
-const DISPLAY_COLOR_CHOICES = [
-	{ id: '0', label: 'Green', color: 0x000000, bgcolor: 0x66bb6a },
-	{ id: '1', label: 'Blue', color: 0xffffff, bgcolor: 0x1e88e5 },
-	{ id: '2', label: 'Yellow', color: 0x000000, bgcolor: 0xffeb3b },
-	{ id: '3', label: 'Cyan', color: 0x000000, bgcolor: 0x4dd0e1 },
-	{ id: '4', label: 'Magenta', color: 0xffffff, bgcolor: 0xd500f9 },
-	{ id: '5', label: 'Red', color: 0xffffff, bgcolor: 0xd32f2f },
-]
+const { SNAPSHOT_MAX, DISPLAY_NOCHANGE, DISPLAY_BRIGHTNESS_CHOICES, DISPLAY_COLOR_CHOICES } = require('./helpers')
 
 function inputMutePreset(self, ch) {
 	const inst = self.label || 'Galaxy'

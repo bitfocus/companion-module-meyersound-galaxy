@@ -14,12 +14,12 @@ const DISPLAY_BRIGHTNESS_CHOICES = [
 ]
 
 const DISPLAY_COLOR_CHOICES = [
-	{ id: '0', label: 'Green' },
-	{ id: '1', label: 'Blue' },
-	{ id: '2', label: 'Yellow' },
-	{ id: '3', label: 'Cyan' },
-	{ id: '4', label: 'Magenta' },
-	{ id: '5', label: 'Red' },
+	{ id: '0', label: 'Green', color: 0x000000, bgcolor: 0x66bb6a },
+	{ id: '1', label: 'Blue', color: 0xffffff, bgcolor: 0x1e88e5 },
+	{ id: '2', label: 'Yellow', color: 0x000000, bgcolor: 0xffeb3b },
+	{ id: '3', label: 'Cyan', color: 0x000000, bgcolor: 0x4dd0e1 },
+	{ id: '4', label: 'Magenta', color: 0xffffff, bgcolor: 0xd500f9 },
+	{ id: '5', label: 'Red', color: 0xffffff, bgcolor: 0xd32f2f },
 ]
 
 /**

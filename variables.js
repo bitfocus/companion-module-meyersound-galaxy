@@ -1,4 +1,4 @@
-const { filterTypeLabel, displayBrightnessLabel, displayColorLabel } = require('./helpers')
+const { SNAPSHOT_MAX, filterTypeLabel, displayBrightnessLabel, displayColorLabel } = require('./helpers')
 
 module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUTS) {
 	const vars = []
@@ -463,7 +463,6 @@ module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUT
 	}
 
 	// ===== Snapshots (named only, dynamic) =====
-	const SNAPSHOT_MAX = 255
 	const SNAPSHOT_FIELDS = ['comment', 'created', 'last_updated', 'locked', 'modified', 'name']
 
 	const snapCache = self?.snapshotValues || {}

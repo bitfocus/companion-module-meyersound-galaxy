@@ -338,10 +338,10 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				const comment = await self.parseVariablesInString(String(e.options.snapshot_comment ?? ''))
 
 				if (name || comment) {
-					self._cmdSendLine(
+					self._cmdSendBatch([
 						`:set_snapshot_name ${id} ${quoteSnapshotArg(name)}`,
 						`:set_snapshot_comment ${id} ${quoteSnapshotArg(comment)}`,
-					)
+					])
 				} else {
 					self._cmdSendLine(`:set_snapshot_name ${id} ${quoteSnapshotArg(name)}`)
 				}
