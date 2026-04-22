@@ -1,5 +1,7 @@
 // main.js
 const net = require('net')
+const os = require('os')
+const { Bonjour } = require('bonjour-service')
 const { InstanceBase, runEntrypoint, InstanceStatus, Regex } = require('@companion-module/base')
 const UpdateActions = require('./actions')
 const UpdateFeedbacks = require('./feedbacks')
@@ -20,6 +22,11 @@ const VIRTUAL_MAX_ID = 20
 const DEFAULT_VIRTUAL_HOST = '127.0.0.1'
 const ENTITY_NAME_PATH = '/entity/entity_name'
 const VIRTUAL_SCAN_INTERVAL_MS = 10000
+const LAN_SCAN_INTERVAL_MS = 60000 // Re-scan LAN every 60 seconds
+const LAN_SCAN_CONCURRENCY = 30 // Simultaneous TCP probes per subnet
+const LAN_PROBE_TIMEOUT_MS = 1500 // Timeout for LAN probes (Galaxy responds in <200ms on direct links)
+const LINK_LOCAL_SCAN_CONCURRENCY = 300 // Higher concurrency for full 169.254/16 scan
+const LINK_LOCAL_PROBE_TIMEOUT_MS = 400 // Non-existent hosts wait full timeout; Galaxy responds in ~200ms
 
 // Device channel counts (Galaxy 816 model)
 // NOTE: Different Galaxy models may have different channel counts:
@@ -297,6 +304,16 @@ class ModuleInstance extends InstanceBase {
 		this._virtualDiscoveryEnabled = true
 		this._virtualWatchers = new Map() // key => { sock, host, port, buf }
 		this._virtualWatcherTimers = new Map()
+
+		// mDNS discovery (_mslg._tcp)
+		this._mdnsDevices = [] // [{ key, host, port, name, model, serial }]
+		this._bonjour = null
+		this._mdnsBrowser = null
+
+		// LAN subnet scanner (TCP probe port 25003 across local /24 subnets)
+		this._lanScanInterval = null
+		this._lanScanInFlight = false
+		this._linkLocalScanInFlight = false
 	}
 
 	async init(config) {
@@ -316,6 +333,16 @@ class ModuleInstance extends InstanceBase {
 		this._startSubscribe()
 		this._virtualDiscoveryEnabled = true
 		this._startVirtualDiscoveryLoop()
+		this._startMdnsDiscovery()
+
+		// Kick off link-local discovery immediately in background.
+		// ARP table is unavailable (Companion sandbox blocks child_process), so we scan the
+		// full 169.254.0.0/16. Non-existent hosts wait for the probe timeout, but Galaxy
+		// responds in ~200ms. Scan completes in ~60s; after first discovery the IP is saved
+		// and tried first on every subsequent scan (instant reconnect).
+		this._scanLinkLocal()
+
+		this._startLanScan()
 	}
 
 	async destroy() {
@@ -327,6 +354,8 @@ class ModuleInstance extends InstanceBase {
 		this._stopSpeakerFlashTimer()
 
 		this._disableVirtualDiscovery()
+		this._stopMdnsDiscovery()
+		this._stopLanScan()
 
 		clearTimeout(this._actionsRefreshTimer)
 		this._actionsRefreshTimer = null
@@ -394,23 +423,46 @@ class ModuleInstance extends InstanceBase {
 		this.fanStatus = {}
 		this._virtualDiscoveryEnabled = true
 		this._startVirtualDiscoveryLoop()
+		if (!this._mdnsBrowser) this._startMdnsDiscovery()
+		// Rescan checkbox: force a fresh scan immediately
+		if (config._rescan) {
+			this.saveConfig({ ...config, _rescan: false })
+			this._stopLanScan()
+			this._mdnsDevices = this._mdnsDevices.filter((d) => !d.key.startsWith('lan:'))
+			this._linkLocalScanInFlight = false // allow fresh link-local scan
+			this._scanLinkLocal()
+			this._startLanScan()
+		} else if (!this._lanScanInterval) {
+			this._startLanScan()
+		}
 	}
 
 	// -------- Config UI --------
 	getConfigFields() {
-		const detectedVirtualChoices = (this._virtualDevices || []).map((v) => {
-			const label = v.name || v.model || 'Virtual Galaxy'
-			return { id: v.id, label }
+		// Build unified discovered-device list: real devices first, then virtual
+		const realChoices = (this._mdnsDevices || []).map((d) => {
+			const parts = [d.name, d.model].filter(Boolean)
+			if (parts.length === 0) parts.push(d.host)
+			else parts.push(`(${d.host})`)
+			return { id: d.key, label: parts.join(' — ') }
 		})
 
-		let virtualIdChoices = detectedVirtualChoices
-		const currentVirtualId = this._clampVirtualId(this.config?.virtual_id)
-		if (
-			currentVirtualId !== null &&
-			virtualIdChoices.every((c) => Number(c.id) !== currentVirtualId)
-		) {
-			virtualIdChoices = [{ id: currentVirtualId, label: `Virtual Galaxy` }, ...virtualIdChoices]
+		const virtualChoices = (this._virtualDevices || []).map((v) => {
+			const name = v.name || v.model || 'Galaxy'
+			const portInfo = v.port !== DEFAULT_PHYSICAL_PORT ? ` :${v.port}` : ''
+			return { id: `virtual:${v.id}`, label: `${name}${portInfo} (virtual)` }
+		})
+
+		let autoChoices = [...realChoices, ...virtualChoices]
+
+		// If the saved key is not in the list (e.g. device offline), keep it as a placeholder
+		const currentAutoKey = this.config?.auto_key
+		if (currentAutoKey && autoChoices.every((c) => c.id !== currentAutoKey)) {
+			const staleIp = currentAutoKey.startsWith('lan:') ? currentAutoKey.slice(4) : currentAutoKey
+			autoChoices = [{ id: currentAutoKey, label: `${staleIp} (not found — rescan?)` }, ...autoChoices]
 		}
+
+		const scanStatus = this._lanScanInFlight ? 'Scanning…' : `${realChoices.length + virtualChoices.length} device(s) found`
 
 		return [
 			{
@@ -418,11 +470,19 @@ class ModuleInstance extends InstanceBase {
 				id: 'connection_type',
 				label: 'Connection Type',
 				width: 6,
-				default: 'physical',
+				default: 'auto',
 				choices: [
-					{ id: 'physical', label: 'Physical device' },
-					{ id: 'virtual', label: 'Virtual Galaxy' },
+					{ id: 'auto', label: 'Auto-discover' },
+					{ id: 'physical', label: 'Manual IP / hostname' },
 				],
+			},
+			{
+				type: 'checkbox',
+				id: '_rescan',
+				label: `Rescan network (${scanStatus})`,
+				width: 6,
+				default: false,
+				isVisible: (options) => options.connection_type === 'auto',
 			},
 			{
 				type: 'textinput',
@@ -436,15 +496,15 @@ class ModuleInstance extends InstanceBase {
 			},
 			{
 				type: 'dropdown',
-				id: 'virtual_id',
-				label: 'Virtual Galaxy ID',
-				width: 6,
-				default: VIRTUAL_MIN_ID,
+				id: 'auto_key',
+				label: 'Discovered Galaxy',
+				width: 8,
+				default: autoChoices[0]?.id ?? '',
 				choices:
-					virtualIdChoices.length > 0
-						? virtualIdChoices
-						: [{ id: VIRTUAL_MIN_ID, label: 'No virtual devices detected' }],
-				isVisible: (options) => (options.connection_type ?? 'physical') === 'virtual',
+					autoChoices.length > 0
+						? autoChoices
+						: [{ id: '', label: 'Searching for devices…' }],
+				isVisible: (options) => options.connection_type === 'auto',
 			},
 			// Hidden: we still store port but UI drives it from connection type
 			{
@@ -4120,6 +4180,391 @@ class ModuleInstance extends InstanceBase {
 		return null
 	}
 
+	_startMdnsDiscovery() {
+		if (this._mdnsBrowser) return
+		try {
+			this._bonjour = new Bonjour()
+			this._mdnsBrowser = this._bonjour.find({ type: 'mslg' })
+
+			this._mdnsBrowser.on('up', (service) => {
+				const host = service.addresses?.[0] || service.host
+				const port = service.port || DEFAULT_PHYSICAL_PORT
+				const txt = service.txt || {}
+				const name = txt.galileoname || service.name || null
+				const model = txt.galileotype || null
+				const serial = txt.serialnumber || null
+				const key = service.fqdn || `${host}:${port}`
+
+				const existing = this._mdnsDevices.findIndex((d) => d.key === key)
+				if (existing >= 0) {
+					this._mdnsDevices[existing] = { key, host, port, name, model, serial }
+				} else {
+					this._mdnsDevices = [...this._mdnsDevices, { key, host, port, name, model, serial }]
+				}
+				this.log('info', `mDNS: found Galaxy "${name || key}" (${model}) at ${host}:${port}`)
+			})
+
+			this._mdnsBrowser.on('down', (service) => {
+				const key = service.fqdn || null
+				if (!key) return
+				const before = this._mdnsDevices.length
+				this._mdnsDevices = this._mdnsDevices.filter((d) => d.key !== key)
+				if (this._mdnsDevices.length !== before) {
+					this.log('info', `mDNS: Galaxy "${service.name}" left the network`)
+				}
+			})
+		} catch (err) {
+			this.log('debug', `mDNS discovery failed to start: ${err?.message || err}`)
+		}
+	}
+
+	_stopMdnsDiscovery() {
+		try {
+			this._mdnsBrowser?.stop()
+		} catch {}
+		this._mdnsBrowser = null
+		try {
+			this._bonjour?.destroy()
+		} catch {}
+		this._bonjour = null
+	}
+
+	_startLanScan() {
+		this._stopLanScan()
+		this._runLanScan()
+		this._lanScanInterval = setInterval(() => this._runLanScan(), LAN_SCAN_INTERVAL_MS)
+	}
+
+	_stopLanScan() {
+		clearInterval(this._lanScanInterval)
+		this._lanScanInterval = null
+	}
+
+	// Parse ARP table (async) to find all reachable IPv4 neighbours not covered by subnet scan.
+	// Scan the full 169.254.0.0/16 link-local space for Galaxy devices.
+	// ARP table is unavailable (Companion sandbox: --permission blocks child_process).
+	// Two-phase: first try known IPs instantly, then scan full /16 if nothing found yet.
+	// Non-existent hosts wait for LINK_LOCAL_PROBE_TIMEOUT_MS; Galaxy responds in ~200ms.
+	// Full /16 scan: ~65 seconds at 300 concurrent / 400ms timeout. After first discovery
+	// the IP is saved in config and tried first, making subsequent starts instant.
+	async _scanLinkLocal() {
+		if (this._linkLocalScanInFlight) return
+		this._linkLocalScanInFlight = true
+		try {
+			const ownIps = new Set(Object.values(os.networkInterfaces()).flat().filter((i) => i.family === 'IPv4').map((i) => i.address))
+
+			// Step 1: try known 169.254 IPs immediately (instant if device is at same IP as last time)
+			const knownLinkLocal = new Set()
+			for (const d of this._mdnsDevices) {
+				if (d.host?.startsWith('169.254.')) knownLinkLocal.add(d.host)
+			}
+			const savedAutoIp = this.config?.auto_key?.startsWith('lan:') ? this.config.auto_key.slice(4) : null
+			if (savedAutoIp?.startsWith('169.254.')) knownLinkLocal.add(savedAutoIp)
+
+			if (knownLinkLocal.size > 0) {
+				const results = await Promise.all([...knownLinkLocal].map((h) => this._probeLanHost(h)))
+				const found = results.filter(Boolean)
+				if (found.length > 0) {
+					this._mergeLinkLocalFound(found)
+					return // Already found — skip full /16 scan
+				}
+			}
+
+			if (this._destroyed) return
+
+			// Step 2: no known IPs worked — scan the entire 169.254.0.0/16
+			// Only bother if we actually have a link-local interface (direct cable connection)
+			const hasLinkLocalIface = Object.values(os.networkInterfaces()).flat()
+				.some((i) => i.family === 'IPv4' && !i.internal && i.address.startsWith('169.254.'))
+			if (!hasLinkLocalIface) return
+
+			this.log('info', 'LAN scan: starting full 169.254.0.0/16 scan for link-local Galaxy devices (~60s)…')
+			const found = []
+			for (let b = 1; b <= 254 && !this._destroyed; b++) {
+				const candidates = []
+				for (let h = 1; h <= 254; h++) {
+					const ip = `169.254.${b}.${h}`
+					if (!ownIps.has(ip)) candidates.push(ip)
+				}
+				for (let i = 0; i < candidates.length; i += LINK_LOCAL_SCAN_CONCURRENCY) {
+					if (this._destroyed) break
+					const batch = candidates.slice(i, i + LINK_LOCAL_SCAN_CONCURRENCY)
+					const results = await Promise.all(batch.map((host) => this._probeLinkLocalHost(host)))
+					for (const r of results) { if (r) found.push(r) }
+				}
+				if (found.length > 0) {
+					this._mergeLinkLocalFound(found)
+					return // Found something — stop scanning
+				}
+			}
+		} catch (e) {
+			this.log('debug', `_scanLinkLocal error: ${e?.message}`)
+		} finally {
+			this._linkLocalScanInFlight = false
+		}
+	}
+
+	_mergeLinkLocalFound(found) {
+		const foundKeys = new Set(found.map((d) => d.key))
+		this._mdnsDevices = [...this._mdnsDevices.filter((d) => !foundKeys.has(d.key)), ...found]
+		this.log('info', `LAN scan: found link-local Galaxy: ${found.map((d) => `${d.name || d.host} (${d.host})`).join(', ')}`)
+		const savedKey = this.config?.auto_key
+		if (this.config?.connection_type === 'auto' && savedKey && !foundKeys.has(savedKey)) {
+			this.saveConfig({ ...this.config, auto_key: found[0].key })
+		}
+		this.checkFeedbacks()
+	}
+
+	// Like _probeLanHost but uses LINK_LOCAL_PROBE_TIMEOUT_MS (shorter, for full /16 sweep)
+	_probeLinkLocalHost(host) {
+		return new Promise((resolve) => {
+			const sock = new net.Socket()
+			let resolved = false
+			let buf = ''
+			let lastResult = null
+			let fallbackTimer = null
+
+			const cleanup = (result) => {
+				if (resolved) return
+				resolved = true
+				clearTimeout(fallbackTimer)
+				try { sock.destroy() } catch {}
+				resolve(result ?? lastResult ?? null)
+			}
+
+			sock.setTimeout(LINK_LOCAL_PROBE_TIMEOUT_MS, () => cleanup(null))
+			sock.on('error', () => cleanup(null))
+			sock.on('close', () => cleanup(null))
+
+			sock.on('data', (chunk) => {
+				buf += chunk.toString('utf8')
+				const parts = buf.split(EOL_SPLIT)
+				buf = parts.pop() ?? ''
+				for (const raw of parts) {
+					const line = raw.trim()
+					if (!line || line.includes('#error')) continue
+					if (line.includes(ENTITY_NAME_PATH)) {
+						const name = this._extractRightHandValue(line) || null
+						lastResult = { key: `lan:${host}`, host, port: DEFAULT_PHYSICAL_PORT, name, model: lastResult?.model ?? null }
+						cleanup(lastResult)
+						return
+					} else if (line.includes(MODEL_STRING_PATH)) {
+						const model = this._extractRightHandValue(line) || null
+						lastResult = { key: `lan:${host}`, host, port: DEFAULT_PHYSICAL_PORT, name: lastResult?.name ?? null, model }
+					}
+				}
+			})
+
+			sock.connect(DEFAULT_PHYSICAL_PORT, host, () => {
+				try {
+					sock.write(Buffer.from(
+						`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}+${MODEL_STRING_PATH}${TX_EOL}${MODEL_STRING_PATH}${TX_EOL}`,
+						'utf8',
+					))
+				} catch {}
+				fallbackTimer = setTimeout(() => cleanup(null), LINK_LOCAL_PROBE_TIMEOUT_MS)
+			})
+		})
+	}
+
+	_arpExtraNeighbours(scannedSubnets) {
+		return new Promise((resolve) => {
+			let proc
+			try {
+				const { spawn } = require('child_process')
+				proc = spawn('/usr/sbin/arp', ['-a'])
+			} catch {
+				// child_process blocked by Companion sandbox (--permission flag)
+				resolve([])
+				return
+			}
+			let out = ''
+			proc.stdout.on('data', (d) => { out += d })
+			proc.stderr.on('data', (d) => { out += d }) // macOS arp may write to stderr
+			proc.on('error', () => resolve([]))
+			proc.on('close', () => {
+				const ownIps = new Set(
+					Object.values(os.networkInterfaces()).flat()
+						.filter((i) => i.family === 'IPv4').map((i) => i.address)
+				)
+				const neighbours = []
+				for (const line of out.split('\n')) {
+					const m = line.match(/\((\d+\.\d+\.\d+\.\d+)\)/)
+					if (!m) continue
+					const ip = m[1]
+					if (ownIps.has(ip)) continue
+					if (line.includes('incomplete')) continue
+					if (ip.endsWith('.255') || ip.startsWith('224.') || ip.startsWith('239.')) continue
+					const subnet = ip.split('.').slice(0, 3).join('.')
+					if (scannedSubnets.has(subnet)) continue
+					neighbours.push(ip)
+				}
+				resolve(neighbours)
+			})
+			setTimeout(() => { try { proc.kill() } catch {} resolve([]) }, 3000)
+		})
+	}
+
+	async _runLanScan() {
+		if (this._lanScanInFlight) return
+		this._lanScanInFlight = true
+		try {
+			// Collect /24 subnets from local non-loopback IPv4 interfaces.
+			// Skip link-local (169.254.x.x) — can't scan a /16. Instead probe ARP neighbours.
+			const subnets = new Set()
+			for (const ifaces of Object.values(os.networkInterfaces())) {
+				for (const iface of ifaces) {
+					if (iface.family !== 'IPv4' || iface.internal) continue
+					if (iface.address.startsWith('169.254.')) continue // skip APIPA/link-local
+					// Only scan if netmask covers a /24 or smaller range
+					const maskParts = (iface.netmask || '').split('.')
+					if (maskParts.length !== 4 || Number(maskParts[2]) < 255) continue
+					const parts = iface.address.split('.')
+					if (parts.length !== 4) continue
+					subnets.add(`${parts[0]}.${parts[1]}.${parts[2]}`)
+				}
+			}
+
+			// Phase 0: Link-local discovery (handled by _scanLinkLocal, already running)
+			const found = [] // [{ key, host, port, name, model }]
+
+			// Phase 1: ARP neighbours not covered by subnet scan (instant — link-local, etc.)
+			const arpNeighbours = await this._arpExtraNeighbours(subnets)
+			this.log('debug', `LAN scan: subnets=${[...subnets].join(', ')}, arp-extra=${arpNeighbours.join(', ') || 'none'}`)
+
+			if (arpNeighbours.length > 0) {
+				const results = await Promise.all(arpNeighbours.map((host) => this._probeLanHost(host)))
+				for (const r of results) {
+					if (r) {
+						found.push(r)
+						this.log('info', `LAN scan: found Galaxy "${r.name || r.host}" (${r.model || 'unknown'}) at ${r.host} [ARP]`)
+					}
+				}
+				// Update device list immediately so the dropdown populates right away
+				if (found.length > 0) {
+					const arpKeys = new Set(found.map((d) => d.key))
+					this._mdnsDevices = [
+						...this._mdnsDevices.filter((d) => !arpKeys.has(d.key)),
+						...found,
+					]
+					// If saved auto_key is stale, replace it with the first found device
+					const savedKey = this.config?.auto_key
+					const allKeys = new Set(this._mdnsDevices.map((d) => d.key))
+					if (savedKey && !allKeys.has(savedKey) && this.config?.connection_type === 'auto') {
+						this.log('info', `Auto-selecting newly discovered Galaxy: ${found[0].key}`)
+						this.saveConfig({ ...this.config, auto_key: found[0].key })
+					}
+					this.checkFeedbacks()
+				}
+			}
+
+			// Phase 2: Full subnet scan
+			for (const subnet of subnets) {
+				const ownIps = new Set(
+					Object.values(os.networkInterfaces())
+						.flat()
+						.filter((i) => i.family === 'IPv4')
+						.map((i) => i.address),
+				)
+				const hosts = []
+				for (let i = 1; i <= 254; i++) {
+					const host = `${subnet}.${i}`
+					if (!ownIps.has(host) && !found.find((d) => d.host === host)) hosts.push(host)
+				}
+
+				for (let i = 0; i < hosts.length; i += LAN_SCAN_CONCURRENCY) {
+					if (!this._lanScanInterval && !this._lanScanInFlight) break // stopped
+					const batch = hosts.slice(i, i + LAN_SCAN_CONCURRENCY)
+					const results = await Promise.all(batch.map((host) => this._probeLanHost(host)))
+					for (const r of results) {
+						if (r) found.push(r)
+					}
+				}
+			}
+
+			// Merge results into _mdnsDevices (LAN-discovered devices use key = `lan:host`)
+			// Keep mDNS-discovered entries, replace/add LAN entries
+			const lanKeys = new Set(found.map((d) => d.key))
+			const kept = this._mdnsDevices.filter((d) => !d.key.startsWith('lan:'))
+			const merged = [...kept, ...found]
+
+			// Remove stale LAN entries that were previously found but no longer respond
+			// Log newly discovered devices
+			const prevLanKeys = new Set(this._mdnsDevices.filter((d) => d.key.startsWith('lan:')).map((d) => d.key))
+			for (const d of found) {
+				if (!prevLanKeys.has(d.key)) {
+					this.log('info', `LAN scan: found Galaxy "${d.name || d.host}" (${d.model || 'unknown model'}) at ${d.host}`)
+				}
+			}
+			const disappeared = [...prevLanKeys].filter((k) => !lanKeys.has(k))
+			if (disappeared.length > 0) {
+				for (const k of disappeared) {
+					const dev = this._mdnsDevices.find((d) => d.key === k)
+					if (dev) this.log('info', `LAN scan: Galaxy "${dev.name || dev.host}" no longer reachable`)
+				}
+			}
+
+			this._mdnsDevices = merged
+			this.log('debug', `LAN scan: done, found ${found.length} device(s): ${found.map(d => d.host).join(', ') || 'none'}`)
+		} catch (err) {
+			this.log('debug', `LAN scan error: ${err?.message || err}`)
+		} finally {
+			this._lanScanInFlight = false
+		}
+	}
+
+	_probeLanHost(host) {
+		return new Promise((resolve) => {
+			const sock = new net.Socket()
+			let resolved = false
+			let buf = ''
+			let lastResult = null
+			let fallbackTimer = null
+
+			const cleanup = (result) => {
+				if (resolved) return
+				resolved = true
+				clearTimeout(fallbackTimer)
+				try { sock.destroy() } catch {}
+				resolve(result ?? lastResult ?? null)
+			}
+
+			sock.setTimeout(LAN_PROBE_TIMEOUT_MS, () => cleanup(null))
+			sock.on('error', () => cleanup(null))
+			sock.on('close', () => cleanup(null))
+
+			sock.on('data', (chunk) => {
+				buf += chunk.toString('utf8')
+				const parts = buf.split(EOL_SPLIT)
+				buf = parts.pop() ?? ''
+				for (const raw of parts) {
+					const line = raw.trim()
+					if (!line || line.includes('#error')) continue
+					if (line.includes(ENTITY_NAME_PATH)) {
+						const name = this._extractRightHandValue(line) || null
+						lastResult = { key: `lan:${host}`, host, port: DEFAULT_PHYSICAL_PORT, name, model: lastResult?.model ?? null }
+						cleanup(lastResult)
+						return
+					} else if (line.includes(MODEL_STRING_PATH)) {
+						const model = this._extractRightHandValue(line) || null
+						lastResult = { key: `lan:${host}`, host, port: DEFAULT_PHYSICAL_PORT, name: lastResult?.name ?? null, model }
+					}
+				}
+			})
+
+			sock.connect(DEFAULT_PHYSICAL_PORT, host, () => {
+				// Galaxy responds immediately on direct links; allow up to 1s for response
+				try {
+					sock.write(Buffer.from(
+						`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}+${MODEL_STRING_PATH}${TX_EOL}${MODEL_STRING_PATH}${TX_EOL}`,
+						'utf8',
+					))
+				} catch {}
+				fallbackTimer = setTimeout(() => cleanup(null), 1000)
+			})
+		})
+	}
+
 	_disableVirtualDiscovery() {
 		this._virtualDiscoveryEnabled = false
 		clearTimeout(this._virtualScanTimer)
@@ -4304,9 +4749,17 @@ class ModuleInstance extends InstanceBase {
 
 	async _detectVirtualDevices() {
 		const probes = []
+
+		// Probe the standard text-interface port on localhost — catches manually-launched g2d instances
+		// (e.g. the hidden emulator inside the Compass app bundle, started as `g2d g2d`)
+		probes.push(this._probeVirtualHostPort('127.0.0.1', DEFAULT_PHYSICAL_PORT, 0))
+		probes.push(this._probeVirtualHostPort('::1', DEFAULT_PHYSICAL_PORT, 0))
+
+		// Probe the Compass virtual-Galaxy port range (50503, 50403, …)
 		for (let id = VIRTUAL_MIN_ID; id <= VIRTUAL_MAX_ID; id++) {
 			probes.push(this._probeVirtualId(id))
 		}
+
 		const results = await Promise.all(probes)
 		const filtered = results.filter((r) => !!r)
 		const uniqueById = []
@@ -4389,21 +4842,25 @@ class ModuleInstance extends InstanceBase {
 
 	// ---- Connection resolver (physical + virtual) ----
 	_resolveHostPortFromConfig() {
-		const connectionType = this.config?.connection_type || 'physical'
+		const connectionType = this.config?.connection_type || 'auto'
 
-		if (connectionType === 'virtual') {
-			let host =
-				typeof this.config?.virtual_host === 'string' && this.config.virtual_host.trim() !== ''
-					? this.config.virtual_host.trim()
-					: DEFAULT_VIRTUAL_HOST
-			if (host.startsWith('[') && host.endsWith(']')) {
-				host = host.slice(1, -1).trim()
+		if (connectionType === 'auto') {
+			const key = this.config?.auto_key || ''
+
+			// Virtual device: key = 'virtual:<id>'
+			if (key.startsWith('virtual:')) {
+				const virtualId = Number(key.slice('virtual:'.length))
+				const cached = (this._virtualDevices || []).find((d) => d.id === virtualId)
+				if (cached) return { host: cached.host || DEFAULT_VIRTUAL_HOST, port: cached.port }
+				// Fallback: compute port from ID
+				const clamped = this._clampVirtualId(virtualId) ?? VIRTUAL_MIN_ID
+				return { host: DEFAULT_VIRTUAL_HOST, port: this._virtualPortForId(clamped) }
 			}
 
-			const virtualId = this._clampVirtualId(this.config?.virtual_id) ?? VIRTUAL_MIN_ID
-			const port = this._virtualPortForId(virtualId)
-
-			return { host, port }
+			// Real device: look up in mDNS/LAN list
+			const device = (this._mdnsDevices || []).find((d) => d.key === key)
+			if (!device) return { host: null, port: null }
+			return { host: device.host, port: device.port }
 		}
 
 		const rawHost = this.config?.host
