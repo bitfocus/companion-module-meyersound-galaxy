@@ -570,6 +570,10 @@ class ModuleInstance extends InstanceBase {
 			this._reconnectAttempts = 0
 			this._reconnectDelay = RECONNECT_DELAY_MS
 
+			// Cache the device we just connected to — only on actual success.
+			const connectedEntry = (this._mdnsDevices || []).find((d) => d.host === host)
+			if (connectedEntry) this._cacheLastDevice(connectedEntry)
+
 			this.updateStatus(InstanceStatus.Ok, 'Subscribed')
 
 			// Subscribe inputs
@@ -4197,12 +4201,12 @@ class ModuleInstance extends InstanceBase {
 					this._mdnsDevices = [...this._mdnsDevices, entry]
 				}
 				this.log('info', `mDNS: found Galaxy "${name || key}" (${model || 'unknown'}) at ${host}:${port}`)
-				this._cacheLastDevice(entry)
 				this.checkFeedbacks()
-				// Trigger connect only on genuine first discovery (not in a backoff retry loop).
-				// If _reconnectAttempts > 0, the retry timer is already scheduled — let it handle it.
+				// Connect only on genuine first discovery: not in a backoff loop, not already
+				// connected, and the discovered device is actually the one we're configured for.
 				if (this.config?.connection_type === 'auto' && !this.subSock && this._reconnectAttempts === 0) {
-					this._startSubscribe()
+					const { host: resolvedHost } = this._resolveHostPortFromConfig()
+					if (resolvedHost) this._startSubscribe()
 				}
 			})
 
