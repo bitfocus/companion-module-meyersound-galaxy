@@ -416,7 +416,7 @@ class ModuleInstance extends InstanceBase {
 		if (config._rescan) {
 			this.saveConfig({ ...config, _rescan: false })
 			this._burstMdnsQueries()
-			this._runSubnetProbe()
+			this._runSubnetProbe(true)
 		}
 	}
 
@@ -4338,11 +4338,19 @@ class ModuleInstance extends InstanceBase {
 
 	// One-shot /24 subnet probe — fallback for networks where mDNS is filtered.
 	// Probes all 254 hosts in the current subnet simultaneously at SUBNET_PROBE_TIMEOUT_MS.
-	// ~500ms total. Runs on init and on manual rescan. Results are merged into _mdnsDevices.
-	async _runSubnetProbe() {
+	// ~500ms total. Runs on init (only when no cached device) and on manual rescan.
+	// Results are merged into _mdnsDevices.
+	async _runSubnetProbe(force = false) {
 		if (this._subnetProbeInFlight) return
+		// Skip on routine restarts — the cached device + mDNS is sufficient.
+		// Only probe when there is genuinely no known device (first ever run, or forced rescan).
+		if (!force && this._readCachedDevice()?.host) return
 		this._subnetProbeInFlight = true
 		try {
+			// Random jitter so multiple module instances don't hammer the same devices at once.
+			const jitter = Math.floor(Math.random() * 1500)
+			await new Promise((r) => setTimeout(r, jitter))
+			if (this._destroyed) return
 			const subnets = new Set()
 			for (const ifaces of Object.values(networkInterfaces())) {
 				for (const iface of ifaces) {
