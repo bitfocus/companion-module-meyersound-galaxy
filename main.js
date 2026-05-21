@@ -4199,8 +4199,9 @@ class ModuleInstance extends InstanceBase {
 				this.log('info', `mDNS: found Galaxy "${name || key}" (${model || 'unknown'}) at ${host}:${port}`)
 				this._cacheLastDevice(entry)
 				this.checkFeedbacks()
-				// If we're in auto mode and not yet connected, try connecting now.
-				if (this.config?.connection_type === 'auto' && !this.subSock) {
+				// Trigger connect only on genuine first discovery (not in a backoff retry loop).
+				// If _reconnectAttempts > 0, the retry timer is already scheduled — let it handle it.
+				if (this.config?.connection_type === 'auto' && !this.subSock && this._reconnectAttempts === 0) {
 					this._startSubscribe()
 				}
 			})
@@ -4390,7 +4391,7 @@ class ModuleInstance extends InstanceBase {
 					this.log('info', `Subnet scan: found Galaxy "${d.name || d.host}" at ${d.host}`)
 				}
 				this.checkFeedbacks()
-				if (this.config?.connection_type === 'auto' && !this.subSock) {
+				if (this.config?.connection_type === 'auto' && !this.subSock && this._reconnectAttempts === 0) {
 					this._startSubscribe()
 				}
 			}
