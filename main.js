@@ -4261,6 +4261,11 @@ class ModuleInstance extends InstanceBase {
 	_restoreCachedDevice() {
 		const cached = this._readCachedDevice()
 		if (!cached?.key || !cached?.host) return
+		// Sanity-check: only restore if it matches what we're configured to connect to.
+		// A previous bug could write another device's data into _last_device via mDNS;
+		// ignore those stale entries so we don't probe or connect to the wrong host.
+		const autoKey = this.config?.auto_key
+		if (autoKey && cached.key !== autoKey && `lan:${cached.host}` !== autoKey) return
 		if (this._mdnsDevices.some((d) => d.key === cached.key)) return
 		this._mdnsDevices = [...this._mdnsDevices, cached]
 	}
