@@ -1354,46 +1354,41 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	_cmdFlush() {
+		if (this.cmdQueue.length === 0) return
+
+		// Prefer the persistent subscription socket — same protocol, bidirectional,
+		// and avoids opening a second TCP connection that can push Galaxy over its
+		// client limit when Compass is also connected.
+		if (this.subSock) {
+			const lines = this.cmdQueue.splice(0, this.cmdQueue.length)
+			try {
+				this.subSock.write(Buffer.from(lines.join(TX_EOL) + TX_EOL, 'utf8'))
+			} catch {
+				this.cmdQueue.unshift(...lines)
+			}
+			return
+		}
+
+		// Fallback: open a short-lived command socket when subSock isn't available.
 		this._ensureCmdSocket()
 		const s = this.cmdSock
 		if (!s) return
-		if (this.cmdQueue.length === 0) {
-			clearTimeout(this.cmdTimer)
-			this.cmdTimer = setTimeout(() => {
-				try {
-					s.end()
-				} catch {}
-				try {
-					s.destroy()
-				} catch {}
-				this.cmdSock = null
-			}, CMD_SOCKET_TIMEOUT_MS)
-			return
-		}
-		clearTimeout(this.cmdTimer)
 
+		clearTimeout(this.cmdTimer)
 		const lines = this.cmdQueue.splice(0, this.cmdQueue.length)
 		try {
 			s.write(Buffer.from(lines.join(TX_EOL) + TX_EOL, 'utf8'))
 		} catch {
 			this.cmdQueue.unshift(...lines)
-			try {
-				s.end()
-			} catch {}
-			try {
-				s.destroy()
-			} catch {}
+			try { s.end() } catch {}
+			try { s.destroy() } catch {}
 			this.cmdSock = null
 			this._ensureCmdSocket()
 			return
 		}
 		this.cmdTimer = setTimeout(() => {
-			try {
-				s.end()
-			} catch {}
-			try {
-				s.destroy()
-			} catch {}
+			try { s.end() } catch {}
+			try { s.destroy() } catch {}
 			this.cmdSock = null
 		}, CMD_SOCKET_TIMEOUT_MS)
 	}
