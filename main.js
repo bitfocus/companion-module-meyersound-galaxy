@@ -554,6 +554,13 @@ class ModuleInstance extends InstanceBase {
 		sock.on('close', reconnect)
 
 		sock.on('data', (chunk) => {
+			// Galaxy sometimes accepts the TCP connection and immediately closes it when at
+			// max clients. Only reset the reconnect backoff when we actually receive data —
+			// that proves we have a real, working connection.
+			if (this._reconnectAttempts > 0) {
+				this._reconnectAttempts = 0
+				this._reconnectDelay = RECONNECT_DELAY_MS
+			}
 			this.subBuf += chunk.toString('utf8')
 			const parts = this.subBuf.split(EOL_SPLIT)
 			this.subBuf = parts.pop() ?? ''
@@ -566,10 +573,6 @@ class ModuleInstance extends InstanceBase {
 
 		this.updateStatus(InstanceStatus.Connecting, `Subscribing ${host}:${port}`)
 		sock.connect(port, host, () => {
-			// Reset reconnection counters on successful connection
-			this._reconnectAttempts = 0
-			this._reconnectDelay = RECONNECT_DELAY_MS
-
 			// Cache the device we just connected to — only on actual success.
 			const connectedEntry = (this._mdnsDevices || []).find((d) => d.host === host)
 			if (connectedEntry) this._cacheLastDevice(connectedEntry)
