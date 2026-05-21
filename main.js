@@ -4353,6 +4353,10 @@ class ModuleInstance extends InstanceBase {
 		// Skip on routine restarts — the cached device + mDNS is sufficient.
 		// Only probe when there is genuinely no known device (first ever run, or forced rescan).
 		if (!force && this._readCachedDevice()?.host) return
+		// Skip if no device has ever been configured — mDNS populates the dropdown for
+		// new modules; probing 254 hosts with no auto_key serves no connection purpose
+		// and produces spurious TCP connections on every Galaxy in the subnet.
+		if (!force && !this.config?.auto_key) return
 		this._subnetProbeInFlight = true
 		try {
 			// Random jitter so multiple module instances don't hammer the same devices at once.
