@@ -93,8 +93,8 @@ function inputLinkGroupBypassPreset(self, group) {
 			{
 				down: [
 					{
-						actionId: 'input_link_group_bypass',
-						options: { operation: 'toggle', groups: [String(group)] },
+						actionId: 'input_link_group',
+						options: { channels: [], link_group: String(group), bypass: 'toggle' },
 					},
 				],
 				up: [],
@@ -128,8 +128,8 @@ function outputLinkGroupBypassPreset(self, group) {
 			{
 				down: [
 					{
-						actionId: 'output_link_group_bypass',
-						options: { operation: 'toggle', groups: [String(group)] },
+						actionId: 'output_link_group',
+						options: { channels: [], link_group: String(group), bypass: 'toggle' },
 					},
 				],
 				up: [],
@@ -163,8 +163,8 @@ function inputLinkGroupAssignPreset(self, ch) {
 			{
 				down: [
 					{
-						actionId: 'input_link_group_assign',
-						options: { channels: [String(ch)], link_group: '1' },
+						actionId: 'input_link_group',
+						options: { channels: [String(ch)], link_group: '1', bypass: 'no_change' },
 					},
 				],
 				up: [],
@@ -361,8 +361,8 @@ function outputLinkGroupAssignPreset(self, ch) {
 			{
 				down: [
 					{
-						actionId: 'output_link_group_assign',
-						options: { channels: [String(ch)], link_group: '1' },
+						actionId: 'output_link_group',
+						options: { channels: [String(ch)], link_group: '1', bypass: 'no_change' },
 					},
 				],
 				up: [],

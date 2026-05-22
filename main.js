@@ -431,9 +431,11 @@ class ModuleInstance extends InstanceBase {
 		})
 
 		const virtualChoices = (this._virtualDevices || []).map((v) => {
-			const name = v.name || v.model || 'Galaxy'
+			const name = v.name || 'Galaxy'
+			const modelHint = v.model && v.model !== v.name ? ` [${v.model}]` : ''
 			const portInfo = v.port !== DEFAULT_PHYSICAL_PORT ? ` :${v.port}` : ''
-			return { id: `virtual:${v.id}`, label: `${name}${portInfo} (virtual)` }
+			const tag = v.id === 0 ? 'fake' : 'virtual'
+			return { id: `virtual:${v.id}`, label: `${name}${modelHint}${portInfo} (${tag})` }
 		})
 
 		let autoChoices = [...realChoices, ...virtualChoices]
@@ -4494,11 +4496,17 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	_syncVirtualWatchers(devices) {
+		// Don't watcher the device subSock is already connected to — the subscription
+		// stream already delivers name/model updates, and a second connection would
+		// push g2d (or any low-limit device) over its TCP client cap.
+		const { host: subHost, port: subPort } = this._resolveHostPortFromConfig()
+
 		const desiredKeys = new Set()
 		for (const dev of devices) {
 			const key = `${dev.host || DEFAULT_VIRTUAL_HOST}:${dev.port}`
 			desiredKeys.add(key)
-			if (!this._virtualWatchers.has(key)) {
+			const sameAsSubSock = dev.host === subHost && dev.port === subPort
+			if (!sameAsSubSock && !this._virtualWatchers.has(key)) {
 				this._startVirtualWatcher(dev)
 			}
 		}
@@ -4647,10 +4655,21 @@ class ModuleInstance extends InstanceBase {
 	async _detectVirtualDevices() {
 		const probes = []
 
-		// Probe the standard text-interface port on localhost — catches manually-launched g2d instances
-		// (e.g. the hidden emulator inside the Compass app bundle, started as `g2d g2d`)
-		probes.push(this._probeVirtualHostPort('127.0.0.1', DEFAULT_PHYSICAL_PORT, 0))
-		probes.push(this._probeVirtualHostPort('::1', DEFAULT_PHYSICAL_PORT, 0))
+		// Probe localhost:25003 for a manually-launched g2d instance (`g2d g2d`).
+		// Skip the probe if subSock is already connected there — the device is known alive
+		// and an extra probe connection would steal one of g2d's limited TCP slots.
+		const activeHost = this._connectedCached ? this._resolveHostPortFromConfig() : null
+		const alreadyConnectedToG2d =
+			activeHost &&
+			(activeHost.host === '127.0.0.1' || activeHost.host === '::1' || activeHost.host === 'localhost') &&
+			activeHost.port === DEFAULT_PHYSICAL_PORT
+		if (!alreadyConnectedToG2d) {
+			probes.push(this._probeVirtualHostPort('127.0.0.1', DEFAULT_PHYSICAL_PORT, 0))
+		} else if (this._connectedCached) {
+			// Already connected — keep the existing entry in the list without re-probing
+			const existing = (this._virtualDevices || []).find((d) => d.id === 0)
+			if (existing) probes.push(Promise.resolve(existing))
+		}
 
 		// Probe the Compass virtual-Galaxy port range (50503, 50403, …)
 		for (let id = VIRTUAL_MIN_ID; id <= VIRTUAL_MAX_ID; id++) {
@@ -4749,7 +4768,9 @@ class ModuleInstance extends InstanceBase {
 				const virtualId = Number(key.slice('virtual:'.length))
 				const cached = (this._virtualDevices || []).find((d) => d.id === virtualId)
 				if (cached) return { host: cached.host || DEFAULT_VIRTUAL_HOST, port: cached.port }
-				// Fallback: compute port from ID
+				// ID 0 = fake Galaxy (g2d g2d) — always on the standard physical port
+				if (virtualId === 0) return { host: DEFAULT_VIRTUAL_HOST, port: DEFAULT_PHYSICAL_PORT }
+				// Compass virtual Galaxy: compute port from ID
 				const clamped = this._clampVirtualId(virtualId) ?? VIRTUAL_MIN_ID
 				return { host: DEFAULT_VIRTUAL_HOST, port: this._virtualPortForId(clamped) }
 			}

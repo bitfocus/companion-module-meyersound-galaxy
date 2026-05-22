@@ -751,6 +751,41 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			self.log?.('info', `Clock source command sent: ${cmd}`)
 		},
 	}
+
+	// =========================
+	// ===== MUTE ALL ==========
+	// =========================
+
+	actions['mute_all'] = {
+		name: 'System: Mute All (inputs + outputs)',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'op',
+				label: 'Operation',
+				default: 'toggle',
+				choices: [
+					{ id: 'on', label: 'Mute ALL ON' },
+					{ id: 'off', label: 'Mute ALL OFF' },
+					{ id: 'toggle', label: 'Toggle' },
+				],
+			},
+		],
+		callback: (e) => {
+			if (!self) return
+			const op = e.options.op || 'toggle'
+			for (let ch = 1; ch <= NUM_INPUTS; ch++) {
+				if (op === 'on' && typeof self._setMute === 'function') self._setMute('input', ch, true)
+				else if (op === 'off' && typeof self._setMute === 'function') self._setMute('input', ch, false)
+				else if (typeof self._toggleMute === 'function') self._toggleMute('input', ch)
+			}
+			for (let ch = 1; ch <= NUM_OUTPUTS; ch++) {
+				if (op === 'on' && typeof self._setMute === 'function') self._setMute('output', ch, true)
+				else if (op === 'off' && typeof self._setMute === 'function') self._setMute('output', ch, false)
+				else if (typeof self._toggleMute === 'function') self._toggleMute('output', ch)
+			}
+		},
+	}
 }
 
 module.exports = { registerSystemActions }
