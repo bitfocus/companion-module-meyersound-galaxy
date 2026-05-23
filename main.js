@@ -4383,31 +4383,21 @@ class ModuleInstance extends InstanceBase {
 				const results = await Promise.all(candidates.map((host) => this._probeSubnetHost(host)))
 				const found = results.filter(Boolean)
 				if (found.length === 0) continue
-
-				const foundKeys = new Set(found.map((d) => d.key))
-				this._mdnsDevices = [
-					...this._mdnsDevices.filter((d) => !foundKeys.has(d.key)),
-					...found.filter((d) => !this._mdnsDevices.some((e) => e.host === d.host)),
-				]
-				for (const d of found) {
-					if (!this._mdnsDevices.find((e) => e.key === d.key && e !== d)) continue
-					this.log('info', `Subnet scan: found Galaxy "${d.name || d.host}" at ${d.host}`)
-				}
-				this.checkFeedbacks()
-				if (this.config?.connection_type === 'auto' && !this.subSock && this._reconnectAttempts === 0) {
-					this._startSubscribe()
-				}
+				this._mergeProbeResults(found, 'Subnet scan')
 			}
 
 			// Link-local /16 fallback: APIPA assigns addresses randomly in 169.254.0.0/16.
 			// The Mac and Galaxy may land on DIFFERENT /24 blocks, so the normal /24 probe
 			// misses the Galaxy entirely. Scan remaining /24 blocks one at a time until found.
+			// Don't gate on subSock here — we may be in a reconnect loop to a stale IP.
 			const hasLinkLocal = [...subnets].some((s) => s.startsWith('169.254.'))
-			if (hasLinkLocal && !this.subSock && !this._destroyed) {
+			if (hasLinkLocal && !this._destroyed) {
 				const scannedThirds = new Set([...subnets].map((s) => s.split('.')[2]))
 				this.log('info', 'Link-local interface detected — scanning 169.254.0.0/16 for Galaxy')
-				for (let third = 0; third <= 255 && !this._destroyed && !this.subSock; third++) {
+				for (let third = 0; third <= 255 && !this._destroyed; third++) {
 					if (scannedThirds.has(String(third))) continue
+					// Stop if we successfully connected mid-scan (first data resets attempts to 0)
+					if (this.subSock && this._reconnectAttempts === 0) break
 					const subnet = `169.254.${third}`
 					const candidates = []
 					for (let i = 1; i <= 254; i++) {
@@ -4417,18 +4407,7 @@ class ModuleInstance extends InstanceBase {
 					const results = await Promise.all(candidates.map((host) => this._probeSubnetHost(host)))
 					const found = results.filter(Boolean)
 					if (found.length === 0) continue
-					const foundKeys = new Set(found.map((d) => d.key))
-					this._mdnsDevices = [
-						...this._mdnsDevices.filter((d) => !foundKeys.has(d.key)),
-						...found.filter((d) => !this._mdnsDevices.some((e) => e.host === d.host)),
-					]
-					for (const d of found) {
-						this.log('info', `Link-local scan: found Galaxy "${d.name || d.host}" at ${d.host}`)
-					}
-					this.checkFeedbacks()
-					if (this.config?.connection_type === 'auto' && !this.subSock && this._reconnectAttempts === 0) {
-						this._startSubscribe()
-					}
+					this._mergeProbeResults(found, 'Link-local scan')
 					break
 				}
 			}
@@ -4439,10 +4418,64 @@ class ModuleInstance extends InstanceBase {
 		}
 	}
 
+	// Merge probe-discovered devices into _mdnsDevices, remapping stale IP entries by device name.
+	//
+	// When the Galaxy changes IP (e.g. DHCP → APIPA link-local), the configured auto_key
+	// (like "lan:192.168.1.5") no longer resolves because _mdnsDevices still holds the old host.
+	// This method detects that case via the _last_device name and updates the old entry's host
+	// in-place, so _resolveHostPortFromConfig continues to work without config changes.
+	_mergeProbeResults(found, logPrefix) {
+		if (!found || found.length === 0) return
+
+		// Try to remap a found device to the configured key if the Galaxy moved to a new IP.
+		const configuredKey = this.config?.auto_key
+		const cachedDevice = this._readCachedDevice()
+		if (configuredKey && !configuredKey.startsWith('virtual:') && cachedDevice?.name) {
+			for (const d of found) {
+				if (!d.name || d.name !== cachedDevice.name) continue
+				const staleIdx = this._mdnsDevices.findIndex((e) => e.key === configuredKey)
+				if (staleIdx >= 0 && this._mdnsDevices[staleIdx].host !== d.host) {
+					// Device moved — update host in existing entry (keep same key/auto_key)
+					this.log(
+						'info',
+						`${logPrefix}: "${d.name}" moved ${this._mdnsDevices[staleIdx].host} → ${d.host}`,
+					)
+					this._mdnsDevices[staleIdx] = { ...this._mdnsDevices[staleIdx], host: d.host }
+				} else if (staleIdx < 0) {
+					// No entry for configured key yet — insert with the configured key so it resolves
+					this._mdnsDevices = [
+						{ ...d, key: configuredKey },
+						...this._mdnsDevices.filter((e) => e.host !== d.host),
+					]
+					this.log('info', `${logPrefix}: found "${d.name}" at ${d.host}`)
+				}
+				break
+			}
+		}
+
+		// Standard merge: update existing entries and add new ones
+		const foundKeys = new Set(found.map((d) => d.key))
+		this._mdnsDevices = [
+			...this._mdnsDevices.filter((d) => !foundKeys.has(d.key)),
+			...found.filter((d) => !this._mdnsDevices.some((e) => e.host === d.host)),
+		]
+		for (const d of found) {
+			this.log('info', `${logPrefix}: found Galaxy "${d.name || d.host}" at ${d.host}`)
+		}
+		this.checkFeedbacks()
+
+		// Trigger connection if auto mode and not already connected/connecting
+		if (this.config?.connection_type === 'auto' && !this.subSock) {
+			const { host: resolvedHost } = this._resolveHostPortFromConfig()
+			if (resolvedHost) this._startSubscribe()
+		}
+	}
+
 	// Like _probeKnownHost but with the shorter SUBNET_PROBE_TIMEOUT_MS for bulk scanning.
 	_probeSubnetHost(host) {
 		return new Promise((resolve) => {
 			const sock = new net.Socket()
+			sock.unref() // Don't prevent process exit while 254-host probes are in flight
 			let resolved = false
 			let buf = ''
 			let lastResult = null
