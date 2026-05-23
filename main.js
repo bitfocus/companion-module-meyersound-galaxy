@@ -4344,13 +4344,12 @@ class ModuleInstance extends InstanceBase {
 	// Results are merged into _mdnsDevices.
 	async _runSubnetProbe(force = false) {
 		if (this._subnetProbeInFlight) return
-		// Skip on routine restarts — the cached device + mDNS is sufficient.
-		// Only probe when there is genuinely no known device (first ever run, or forced rescan).
-		if (!force && this._readCachedDevice()?.host) return
 		// Skip if no device has ever been configured — mDNS populates the dropdown for
 		// new modules; probing 254 hosts with no auto_key serves no connection purpose
 		// and produces spurious TCP connections on every Galaxy in the subnet.
 		if (!force && !this.config?.auto_key) return
+		// Always probe on startup even with a cached device — the Galaxy may have moved
+		// to a new IP (e.g. from DHCP to link-local 169.254.x.x) and the cache would be stale.
 		this._subnetProbeInFlight = true
 		try {
 			// Random jitter so multiple module instances don't hammer the same devices at once.
@@ -4397,6 +4396,40 @@ class ModuleInstance extends InstanceBase {
 				this.checkFeedbacks()
 				if (this.config?.connection_type === 'auto' && !this.subSock && this._reconnectAttempts === 0) {
 					this._startSubscribe()
+				}
+			}
+
+			// Link-local /16 fallback: APIPA assigns addresses randomly in 169.254.0.0/16.
+			// The Mac and Galaxy may land on DIFFERENT /24 blocks, so the normal /24 probe
+			// misses the Galaxy entirely. Scan remaining /24 blocks one at a time until found.
+			const hasLinkLocal = [...subnets].some((s) => s.startsWith('169.254.'))
+			if (hasLinkLocal && !this.subSock && !this._destroyed) {
+				const scannedThirds = new Set([...subnets].map((s) => s.split('.')[2]))
+				this.log('info', 'Link-local interface detected — scanning 169.254.0.0/16 for Galaxy')
+				for (let third = 0; third <= 255 && !this._destroyed && !this.subSock; third++) {
+					if (scannedThirds.has(String(third))) continue
+					const subnet = `169.254.${third}`
+					const candidates = []
+					for (let i = 1; i <= 254; i++) {
+						const ip = `${subnet}.${i}`
+						if (!ownIps.has(ip)) candidates.push(ip)
+					}
+					const results = await Promise.all(candidates.map((host) => this._probeSubnetHost(host)))
+					const found = results.filter(Boolean)
+					if (found.length === 0) continue
+					const foundKeys = new Set(found.map((d) => d.key))
+					this._mdnsDevices = [
+						...this._mdnsDevices.filter((d) => !foundKeys.has(d.key)),
+						...found.filter((d) => !this._mdnsDevices.some((e) => e.host === d.host)),
+					]
+					for (const d of found) {
+						this.log('info', `Link-local scan: found Galaxy "${d.name || d.host}" at ${d.host}`)
+					}
+					this.checkFeedbacks()
+					if (this.config?.connection_type === 'auto' && !this.subSock && this._reconnectAttempts === 0) {
+						this._startSubscribe()
+					}
+					break
 				}
 			}
 		} catch (e) {
