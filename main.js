@@ -1361,20 +1361,9 @@ class ModuleInstance extends InstanceBase {
 	_cmdFlush() {
 		if (this.cmdQueue.length === 0) return
 
-		// Prefer the persistent subscription socket — same protocol, bidirectional,
-		// and avoids opening a second TCP connection that can push Galaxy over its
-		// client limit when Compass is also connected.
-		if (this.subSock) {
-			const lines = this.cmdQueue.splice(0, this.cmdQueue.length)
-			try {
-				this.subSock.write(Buffer.from(lines.join(TX_EOL) + TX_EOL, 'utf8'))
-			} catch {
-				this.cmdQueue.unshift(...lines)
-			}
-			return
-		}
-
-		// Fallback: open a short-lived command socket when subSock isn't available.
+		// Commands go through a dedicated short-lived cmdSock.
+		// Galaxy's subscription socket is read-oriented; sending control commands
+		// on it may be silently ignored depending on firmware/connection state.
 		this._ensureCmdSocket()
 		const s = this.cmdSock
 		if (!s) return
@@ -4369,7 +4358,6 @@ class ModuleInstance extends InstanceBase {
 			for (const ifaces of Object.values(networkInterfaces())) {
 				for (const iface of ifaces) {
 					if (iface.family !== 'IPv4' || iface.internal) continue
-					if (iface.address.startsWith('169.254.')) continue
 					const parts = iface.address.split('.')
 					if (parts.length !== 4) continue
 					subnets.add(`${parts[0]}.${parts[1]}.${parts[2]}`)
