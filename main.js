@@ -1359,15 +1359,18 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	_cmdFlush() {
-		if (this.cmdQueue.length === 0) return
-
-		// Commands go through a dedicated short-lived cmdSock.
-		// Galaxy's subscription socket is read-oriented; sending control commands
-		// on it may be silently ignored depending on firmware/connection state.
 		this._ensureCmdSocket()
 		const s = this.cmdSock
 		if (!s) return
-
+		if (this.cmdQueue.length === 0) {
+			clearTimeout(this.cmdTimer)
+			this.cmdTimer = setTimeout(() => {
+				try { s.end() } catch {}
+				try { s.destroy() } catch {}
+				this.cmdSock = null
+			}, CMD_SOCKET_TIMEOUT_MS)
+			return
+		}
 		clearTimeout(this.cmdTimer)
 		const lines = this.cmdQueue.splice(0, this.cmdQueue.length)
 		try {
