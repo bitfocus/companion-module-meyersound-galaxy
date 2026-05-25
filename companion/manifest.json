@@ -2,8 +2,8 @@
 	"id": "meyersound-galaxy",
 	"name": "meyersound-galaxy",
 	"shortname": "Galaxy",
-	"description": "Control a Meyer Sound Galaxy device via TCP",
-	"version": "1.4.2",
+	"description": "Auto-discover and control Meyer Sound Galaxy devices (408, 816, 816-AES, Bluehorn) via TCP.",
+	"version": "1.5.0",
 	"license": "MIT",
 	"repository": "git+https://github.com/bitfocus/companion-module-meyersound-galaxy.git",
 	"bugs": "https://github.com/bitfocus/companion-module-meyersound-galaxy/issues",
@@ -17,16 +17,13 @@
 		"type": "node22",
 		"api": "nodejs-ipc",
 		"apiVersion": "0.0.0",
-		"entrypoint": "../main.js"
+		"entrypoint": "../main.js",
+		"permissions": {
+			"child-process": true
+		}
 	},
 	"legacyIds": [],
 	"manufacturer": "Meyer Sound",
-	"products": ["Galaxy"],
-	"keywords": ["meyersound", "audio", "galaxy", "DSP"],
-	"bonjourQueries": {
-		"bonjour_host": {
-			"type": "_galaxy._tcp",
-			"protocol": "tcp"
-		}
-	}
+	"products": ["Galaxy 408", "Galaxy 816", "Galaxy 816-AES", "Galaxy Bluehorn"],
+	"keywords": ["meyersound", "audio", "galaxy", "DSP", "discovery"]
 }

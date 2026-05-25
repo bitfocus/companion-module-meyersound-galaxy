@@ -1,8 +1,6 @@
 // main.js
 const net = require('net')
-const { networkInterfaces } = require('os')
-const { Bonjour } = require('bonjour-service')
-const { InstanceBase, runEntrypoint, InstanceStatus, Regex } = require('@companion-module/base')
+const { InstanceBase, runEntrypoint, InstanceStatus } = require('@companion-module/base')
 const UpdateActions = require('./actions')
 const UpdateFeedbacks = require('./feedbacks')
 const UpdateVariableDefinitions = require('./variables')
@@ -10,22 +8,15 @@ const UpgradeScripts = require('./upgrades')
 const UpdatePresets = require('./presets')
 const { STARTING_POINTS_SOURCE, PRODUCT_INTEGRATION_DATA } = require('./actions-data')
 const { SNAPSHOT_MAX, displayBrightnessLabel, displayColorLabel } = require('./helpers')
+const { DiscoveryHelper } = require('./discovery/helper')
+const { VirtualGalaxyScanner } = require('./discovery/virtual-scan')
+const { macToIPv6LinkLocal, modelNameFromEntityModelId } = require('./discovery/galaxy-meta')
 
 // Protocol constants
 const EOL_SPLIT = /\r\n|\n|\r/ // Line ending split pattern for incoming data
 const TX_EOL = '\n' // Line ending for outgoing commands
 const DEFAULT_PHYSICAL_PORT = 25003
-const VIRTUAL_BASE_PORT = 50503
-const VIRTUAL_PORT_STEP = 100
-const VIRTUAL_MIN_ID = 1
-const VIRTUAL_MAX_ID = 20
-const DEFAULT_VIRTUAL_HOST = '127.0.0.1'
 const ENTITY_NAME_PATH = '/entity/entity_name'
-const VIRTUAL_SCAN_INTERVAL_MS = 10000
-const MDNS_QUERY_BURST_COUNT = 4 // Re-issue mDNS queries on init to recover from packet loss
-const MDNS_QUERY_BURST_INTERVAL_MS = 150
-const FAST_RECONNECT_PROBE_TIMEOUT_MS = 800 // Unicast TCP probe to last-known IP on init
-const SUBNET_PROBE_TIMEOUT_MS = 500 // Timeout per host in the /24 fallback scan
 
 // Device channel counts (Galaxy 816 model)
 // NOTE: Different Galaxy models may have different channel counts:
@@ -295,43 +286,52 @@ class ModuleInstance extends InstanceBase {
 		this.inputEQ = {} // { ch: { bypass: bool, band: { gain, frequency, bandwidth, band_bypass } } }
 		this._eqKnobControl = { selectedInputs: [1], selectedBand: 1 }
 
-		// Virtual Galaxy discovery cache
-		this._virtualDevices = [] // [{ id, port, host, name, model }]
-		this._virtualScanTimer = null
-		this._virtualScanInterval = null
-		this._virtualScanInFlight = false
-		this._virtualDiscoveryEnabled = true
-		this._virtualWatchers = new Map() // key => { sock, host, port, buf }
-		this._virtualWatcherTimers = new Map()
-
-		// mDNS discovery (_mslg._tcp)
+		// Discovered Galaxys — single source of truth, populated by the
+		// native ATDECC helper (LAN) and the localhost virtual scanner.
+		// Shape preserved from the old bonjour-based code so the rest of
+		// the module keeps working unchanged.
 		this._mdnsDevices = [] // [{ key, host, port, name, model, serial }]
-		this._bonjour = null
-		this._mdnsBrowser = null
 
+		// Discovery components
+		this._discoveryHelper = null
+		this._virtScan = null
+		this._discoveryStable = false
+		this._lastDeviceArrivalAt = 0
+		this._discoveryStableTimer = null
+
+		// Last-known label cache so the dropdown can still display a
+		// meaningful name for the selected Galaxy when it's offline.
+		// Map<auto_key, { name, model }>
+		this._lastKnownLabels = new Map()
+
+		// Pending name-fetch markers (so we don't double-issue queries).
+		this._nameFetchInflight = new Set()
 	}
 
 	async init(config) {
 		this.config = config
 		this._destroyed = false
-		this.updateStatus(InstanceStatus.Ok, 'Idle')
 
 		this.updateActions()
 		this.updateFeedbacks()
 		this.updateVariableDefinitions()
 		this.updatePresets()
 		this._seedVariables()
-
-		// Seed speaker-test variables
 		this._updateSpeakerTestVars()
 
-		this._virtualDiscoveryEnabled = true
-		this._startVirtualDiscoveryLoop()
-		this._restoreCachedDevice()
-		this._startSubscribe()
-		this._startMdnsDiscovery()
-		this._probeLastKnownDevice()
-		this._runSubnetProbe()
+		// Restore the saved label for the picked Galaxy so the dropdown
+		// shows it as "Name · Model (offline)" if the device is down.
+		if (this.config?.auto_key && this.config?._remembered_label) {
+			const parts = String(this.config._remembered_label).split('|')
+			this._lastKnownLabels.set(this.config.auto_key, {
+				name:  parts[0] || '',
+				model: parts[1] || '',
+			})
+		}
+
+		this._startDiscovery()
+		// _startSubscribe is fired automatically when a Galaxy matching
+		// the user's `auto_key` shows up in the discovered list.
 	}
 
 	async destroy() {
@@ -341,35 +341,25 @@ class ModuleInstance extends InstanceBase {
 		this._stopAllOutputFades()
 		this._stopOutputChase()
 		this._stopSpeakerFlashTimer()
+		this._stopDiscovery()
 
-		this._disableVirtualDiscovery()
-		this._stopMdnsDiscovery()
+		clearTimeout(this._actionsRefreshTimer);   this._actionsRefreshTimer = null
+		clearTimeout(this._feedbacksRefreshTimer); this._feedbacksRefreshTimer = null
+		clearTimeout(this._variablesRefreshTimer); this._variablesRefreshTimer = null
+		clearTimeout(this._meterFlushTimer);       this._meterFlushTimer = null
+		clearTimeout(this._presetsRefreshTimer);   this._presetsRefreshTimer = null
 
-		clearTimeout(this._actionsRefreshTimer)
-		this._actionsRefreshTimer = null
-		clearTimeout(this._feedbacksRefreshTimer)
-		this._feedbacksRefreshTimer = null
-		clearTimeout(this._variablesRefreshTimer)
-		this._variablesRefreshTimer = null
-		clearTimeout(this._meterFlushTimer)
-		this._meterFlushTimer = null
-		clearTimeout(this._presetsRefreshTimer)
-		this._presetsRefreshTimer = null
-
-		try {
-			this.subSock?.destroy()
-		} catch {}
+		try { this.subSock?.destroy() } catch {}
 		this.subSock = null
-		clearTimeout(this.cmdTimer)
-		this.cmdTimer = null
-		try {
-			this.cmdSock?.destroy()
-		} catch {}
+		clearTimeout(this.cmdTimer); this.cmdTimer = null
+		try { this.cmdSock?.destroy() } catch {}
 		this.cmdSock = null
 	}
 
 	async configUpdated(config) {
+		const prevKey = this.config?.auto_key
 		this.config = config
+
 		this.updateActions()
 		this.updateFeedbacks()
 		this.updateVariableDefinitions()
@@ -382,132 +372,59 @@ class ModuleInstance extends InstanceBase {
 		this._stopOutputChase()
 		this._stopSpeakerFlashTimer()
 
-		this._disableVirtualDiscovery()
+		clearTimeout(this._actionsRefreshTimer);   this._actionsRefreshTimer = null
+		clearTimeout(this._feedbacksRefreshTimer); this._feedbacksRefreshTimer = null
+		clearTimeout(this._variablesRefreshTimer); this._variablesRefreshTimer = null
+		clearTimeout(this._meterFlushTimer);       this._meterFlushTimer = null
 
-		clearTimeout(this._actionsRefreshTimer)
-		this._actionsRefreshTimer = null
-		clearTimeout(this._feedbacksRefreshTimer)
-		this._feedbacksRefreshTimer = null
-		clearTimeout(this._variablesRefreshTimer)
-		this._variablesRefreshTimer = null
-		clearTimeout(this._meterFlushTimer)
-		this._meterFlushTimer = null
-
-		try {
-			this.subSock?.destroy()
-		} catch {}
-		this.subSock = null
-		this._startSubscribe()
-
-		clearTimeout(this.cmdTimer)
-		this.cmdTimer = null
-		try {
-			this.cmdSock?.destroy()
-		} catch {}
-		this.cmdSock = null
+		// If the user picked a different Galaxy, tear down the current
+		// subscription socket; we'll reconnect to the new target below.
+		if (config.auto_key !== prevKey) {
+			try { this.subSock?.destroy() } catch {}
+			this.subSock = null
+			clearTimeout(this.cmdTimer); this.cmdTimer = null
+			try { this.cmdSock?.destroy() } catch {}
+			this.cmdSock = null
+			this._reconnectAttempts = 0
+			this._reconnectDelay = RECONNECT_DELAY_MS
+		}
 
 		this._updateSpeakerTestVars()
 		this._logHistoryFetched = false
 		this.fanStatus = {}
-		this._virtualDiscoveryEnabled = true
-		this._startVirtualDiscoveryLoop()
-		if (!this._mdnsBrowser) this._startMdnsDiscovery()
-		// Rescan checkbox: re-issue mDNS queries and re-scan subnet
-		if (config._rescan) {
-			this.saveConfig({ ...config, _rescan: false })
-			this._burstMdnsQueries()
-			this._runSubnetProbe(true)
-		}
+
+		this._maybeStartSubscribe()
 	}
 
 	// -------- Config UI --------
 	getConfigFields() {
-		// Build unified discovered-device list: real devices first, then virtual
-		const realChoices = (this._mdnsDevices || []).map((d) => {
-			const parts = [d.name, d.model].filter(Boolean)
-			if (parts.length === 0) parts.push(d.host)
-			else parts.push(`(${d.host})`)
-			return { id: d.key, label: parts.join(' — ') }
-		})
-
-		const virtualChoices = (this._virtualDevices || []).map((v) => {
-			const name = v.name || 'Galaxy'
-			const modelHint = v.model && v.model !== v.name ? ` [${v.model}]` : ''
-			const portInfo = v.port !== DEFAULT_PHYSICAL_PORT ? ` :${v.port}` : ''
-			const tag = v.id === 0 ? 'fake' : 'virtual'
-			return { id: `virtual:${v.id}`, label: `${name}${modelHint}${portInfo} (${tag})` }
-		})
-
-		let autoChoices = [...realChoices, ...virtualChoices]
-
-		// If the saved key is not in the list (e.g. device offline), keep it as a placeholder
-		const currentAutoKey = this.config?.auto_key
-		if (currentAutoKey && autoChoices.every((c) => c.id !== currentAutoKey)) {
-			const staleIp = currentAutoKey.startsWith('lan:') ? currentAutoKey.slice(4) : currentAutoKey
-			autoChoices = [{ id: currentAutoKey, label: `${staleIp} (not found — rescan?)` }, ...autoChoices]
-		}
-
-		const scanStatus = `${realChoices.length + virtualChoices.length} device(s) found`
-
+		const choices = this._galaxyChoiceList()
 		return [
 			{
-				type: 'dropdown',
-				id: 'connection_type',
-				label: 'Connection Type',
-				width: 6,
-				default: 'auto',
-				choices: [
-					{ id: 'auto', label: 'Auto-discover' },
-					{ id: 'physical', label: 'Manual IP / hostname' },
-				],
-			},
-			{
-				type: 'checkbox',
-				id: '_rescan',
-				label: `Rescan network (${scanStatus})`,
-				width: 6,
-				default: false,
-				isVisible: (options) => options.connection_type === 'auto',
-			},
-			{
-				type: 'textinput',
-				id: 'host',
-				label: 'Target IP / Hostname',
-				width: 8,
-				default: '192.168.0.100',
-				tooltip: 'Supports IPv4, IPv6, or a hostname',
-				regex: Regex.SOMETHING,
-				isVisible: (options) => (options.connection_type ?? 'physical') === 'physical',
+				type: 'static-text',
+				id: 'wait_note',
+				label: '',
+				width: 12,
+				value:
+					'⚠️ Wait for the orange spinner next to this connection ' +
+					'(left side of the row) to stop turning before opening the ' +
+					'dropdown below. While the spinner is on, discovery is still ' +
+					'gathering Galaxys and the list may be incomplete.',
 			},
 			{
 				type: 'dropdown',
 				id: 'auto_key',
-				label: 'Discovered Galaxy',
-				width: 8,
-				default: autoChoices[0]?.id ?? '',
-				choices:
-					autoChoices.length > 0
-						? autoChoices
-						: [{ id: '', label: 'Searching for devices…' }],
-				isVisible: (options) => options.connection_type === 'auto',
+				label: 'Galaxy to control',
+				width: 12,
+				default: choices[1]?.id ?? '',
+				choices,
 			},
-			// Hidden: we still store port but UI drives it from connection type
-			{
-				type: 'number',
-				id: 'port',
-				label: 'Port',
-				width: 4,
-				default: DEFAULT_PHYSICAL_PORT,
-				min: 1,
-				max: 65535,
-				step: 1,
-				isVisible: () => false,
-			},
-			// Hidden: JSON-encoded last-seen device, used for fast cold-start reconnect
+			// Hidden cache for the picked Galaxy's last-known "name|model" so
+			// the dropdown shows a real label when the device is offline.
 			{
 				type: 'textinput',
-				id: '_last_device',
-				label: 'Last device cache',
+				id: '_remembered_label',
+				label: '',
 				width: 0,
 				default: '',
 				isVisible: () => false,
@@ -575,11 +492,7 @@ class ModuleInstance extends InstanceBase {
 
 		this.updateStatus(InstanceStatus.Connecting, `Subscribing ${host}:${port}`)
 		sock.connect(port, host, () => {
-			// Cache the device we just connected to — only on actual success.
-			const connectedEntry = (this._mdnsDevices || []).find((d) => d.host === host)
-			if (connectedEntry) this._cacheLastDevice(connectedEntry)
-
-			this.updateStatus(InstanceStatus.Ok, 'Subscribed')
+			this._refreshDiscoveryStatus()
 
 			// Subscribe inputs
 			for (let ch = 1; ch <= NUM_INPUTS; ch++) {
@@ -4168,452 +4081,162 @@ class ModuleInstance extends InstanceBase {
 		return null
 	}
 
-	_startMdnsDiscovery() {
-		if (this._mdnsBrowser) return
-		try {
-			this._bonjour = new Bonjour()
-			this._mdnsBrowser = this._bonjour.find({ type: 'mslg' })
+	// ======================================================================
+	// Discovery: native ATDECC helper for real Galaxys on the LAN + a
+	// localhost TCP scan for virtual / standalone g2d instances. Both feed
+	// into this._mdnsDevices, the shape the rest of this module already uses.
+	// ======================================================================
 
-			this._mdnsBrowser.on('up', (service) => {
-				const host = service.addresses?.[0] || service.host
-				const port = service.port || DEFAULT_PHYSICAL_PORT
-				const txt = service.txt || {}
-				// Galaxy firmware uses both legacy (galileo*) and post-rebrand (galaxy*) TXT keys.
-				const name = txt.galileoname || txt.galaxyname || service.name || null
-				const model = txt.galileotype || txt.galaxytype || null
-				const serial = txt.serialnumber || null
-				const firmware = txt.firmware || null
-				const key = service.fqdn || `${host}:${port}`
+	_startDiscovery() {
+		// Reset stable detector. Discovery stays "in progress" (orange
+		// status spinner) until the device list has been quiet for QUIET_MS
+		// straight, after a MIN_MS floor.
+		const MIN_MS   = 2000
+		const QUIET_MS = 3000
+		this._discoveryStable = false
+		this._lastDeviceArrivalAt = Date.now()
+		if (this._discoveryStableTimer) clearInterval(this._discoveryStableTimer)
+		const startedAt = Date.now()
+		this._discoveryStableTimer = setInterval(() => {
+			const now = Date.now()
+			if (now - startedAt < MIN_MS) return
+			if (now - this._lastDeviceArrivalAt < QUIET_MS) return
+			this._discoveryStable = true
+			clearInterval(this._discoveryStableTimer)
+			this._discoveryStableTimer = null
+			this._refreshDiscoveryStatus()
+		}, 500)
 
-				const entry = { key, host, port, name, model, serial, firmware }
-				const existing = this._mdnsDevices.findIndex((d) => d.key === key)
-				if (existing >= 0) {
-					this._mdnsDevices[existing] = entry
-				} else {
-					this._mdnsDevices = [...this._mdnsDevices, entry]
-				}
-				this.log('info', `mDNS: found Galaxy "${name || key}" (${model || 'unknown'}) at ${host}:${port}`)
-				this.checkFeedbacks()
-				// Connect only on genuine first discovery: not in a backoff loop, not already
-				// connected, and the discovered device is actually the one we're configured for.
-				if (this.config?.connection_type === 'auto' && !this.subSock && this._reconnectAttempts === 0) {
-					const { host: resolvedHost } = this._resolveHostPortFromConfig()
-					if (resolvedHost) this._startSubscribe()
-				}
-			})
-
-			this._mdnsBrowser.on('down', (service) => {
-				const key = service.fqdn || null
-				if (!key) return
-				const before = this._mdnsDevices.length
-				this._mdnsDevices = this._mdnsDevices.filter((d) => d.key !== key)
-				if (this._mdnsDevices.length !== before) {
-					this.log('info', `mDNS: Galaxy "${service.name}" left the network`)
-				}
-			})
-
-			this._burstMdnsQueries()
-		} catch (err) {
-			this.log('debug', `mDNS discovery failed to start: ${err?.message || err}`)
-		}
-	}
-
-	_stopMdnsDiscovery() {
-		clearTimeout(this._mdnsBurstTimer)
-		this._mdnsBurstTimer = null
-		try {
-			this._mdnsBrowser?.stop()
-		} catch {}
-		this._mdnsBrowser = null
-		try {
-			this._bonjour?.destroy()
-		} catch {}
-		this._bonjour = null
-	}
-
-	// Re-issue mDNS queries a few times in quick succession so a single dropped
-	// multicast packet doesn't cost us seconds of latency on first discovery.
-	_burstMdnsQueries() {
-		clearTimeout(this._mdnsBurstTimer)
-		let n = 0
-		const fire = () => {
-			if (this._destroyed || !this._mdnsBrowser) return
-			try { this._mdnsBrowser.update() } catch {}
-			if (++n < MDNS_QUERY_BURST_COUNT) {
-				this._mdnsBurstTimer = setTimeout(fire, MDNS_QUERY_BURST_INTERVAL_MS)
-			}
-		}
-		fire()
-	}
-
-	_readCachedDevice() {
-		const raw = this.config?._last_device
-		if (!raw || typeof raw !== 'string') return null
-		try { return JSON.parse(raw) } catch { return null }
-	}
-
-	// Restore last-seen device into the in-memory list so the dropdown isn't empty
-	// on cold start. The mDNS browser will replace/refresh this entry as soon as
-	// the device announces.
-	_restoreCachedDevice() {
-		const cached = this._readCachedDevice()
-		if (!cached?.key || !cached?.host) return
-		// Sanity-check: only restore if it matches what we're configured to connect to.
-		// A previous bug could write another device's data into _last_device via mDNS;
-		// ignore those stale entries so we don't probe or connect to the wrong host.
-		const autoKey = this.config?.auto_key
-		if (autoKey && cached.key !== autoKey && `lan:${cached.host}` !== autoKey) return
-		if (this._mdnsDevices.some((d) => d.key === cached.key)) return
-		this._mdnsDevices = [...this._mdnsDevices, cached]
-	}
-
-	_cacheLastDevice(entry) {
-		if (!entry?.key || !entry?.host) return
-		const prev = this._readCachedDevice()
-		if (prev && prev.key === entry.key && prev.host === entry.host && prev.port === entry.port) return
-		this.saveConfig({ ...this.config, _last_device: JSON.stringify(entry) })
-	}
-
-	// Probe the last-known IP directly. If the device is still there (typical case),
-	// the dropdown is populated and the connection comes up before mDNS has even
-	// answered. Probe is best-effort — failure is silent because mDNS will catch up.
-	_probeLastKnownDevice() {
-		const cached = this._readCachedDevice()
-		if (!cached?.host || !cached?.port) return
-		this._probeKnownHost(cached.host, cached.port).then((entry) => {
-			if (!entry || this._destroyed) return
-			if (this._mdnsDevices.some((d) => d.host === entry.host && d.port === entry.port)) return
-			this._mdnsDevices = [...this._mdnsDevices, entry]
-			this.log('info', `Fast reconnect: Galaxy responded at ${entry.host}:${entry.port}`)
-			this.checkFeedbacks()
-		}).catch(() => {})
-	}
-
-	// One-shot TCP probe to a known host:port. Returns a device entry on success, null otherwise.
-	_probeKnownHost(host, port) {
-		return new Promise((resolve) => {
-			const sock = new net.Socket()
-			let resolved = false
-			let buf = ''
-			let lastResult = null
-
-			const cleanup = (result) => {
-				if (resolved) return
-				resolved = true
-				try { sock.destroy() } catch {}
-				resolve(result ?? lastResult ?? null)
-			}
-
-			sock.setTimeout(FAST_RECONNECT_PROBE_TIMEOUT_MS, () => cleanup(null))
-			sock.on('error', () => cleanup(null))
-			sock.on('close', () => cleanup(null))
-
-			sock.on('data', (chunk) => {
-				buf += chunk.toString('utf8')
-				const parts = buf.split(EOL_SPLIT)
-				buf = parts.pop() ?? ''
-				for (const raw of parts) {
-					const line = raw.trim()
-					if (!line || line.includes('#error')) continue
-					if (line.includes(ENTITY_NAME_PATH)) {
-						const name = this._extractRightHandValue(line) || null
-						lastResult = { key: `lan:${host}`, host, port, name, model: lastResult?.model ?? null }
-						cleanup(lastResult)
-						return
-					} else if (line.includes(MODEL_STRING_PATH)) {
-						const model = this._extractRightHandValue(line) || null
-						lastResult = { key: `lan:${host}`, host, port, name: lastResult?.name ?? null, model }
-					}
-				}
-			})
-
-			sock.connect(port, host, () => {
-				try {
-					sock.write(Buffer.from(
-						`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}+${MODEL_STRING_PATH}${TX_EOL}${MODEL_STRING_PATH}${TX_EOL}`,
-						'utf8',
-					))
-				} catch {}
-			})
+		// LAN: ATDECC ADP helper, auto-listening on every plausible interface.
+		this._discoveryHelper = new DiscoveryHelper({
+			log: (lvl, msg) => this.log(lvl, msg),
 		})
-	}
-
-	// One-shot /24 subnet probe — fallback for networks where mDNS is filtered.
-	// Probes all 254 hosts in the current subnet simultaneously at SUBNET_PROBE_TIMEOUT_MS.
-	// ~500ms total. Runs on init (only when no cached device) and on manual rescan.
-	// Results are merged into _mdnsDevices.
-	async _runSubnetProbe(force = false) {
-		if (this._subnetProbeInFlight) return
-		// Skip if no device has ever been configured — mDNS populates the dropdown for
-		// new modules; probing 254 hosts with no auto_key serves no connection purpose
-		// and produces spurious TCP connections on every Galaxy in the subnet.
-		if (!force && !this.config?.auto_key) return
-		// Always probe on startup even with a cached device — the Galaxy may have moved
-		// to a new IP (e.g. from DHCP to link-local 169.254.x.x) and the cache would be stale.
-		this._subnetProbeInFlight = true
-		try {
-			// Random jitter so multiple module instances don't hammer the same devices at once.
-			const jitter = Math.floor(Math.random() * 1500)
-			await new Promise((r) => setTimeout(r, jitter))
-			if (this._destroyed) return
-			const subnets = new Set()
-			for (const ifaces of Object.values(networkInterfaces())) {
-				for (const iface of ifaces) {
-					if (iface.family !== 'IPv4' || iface.internal) continue
-					const parts = iface.address.split('.')
-					if (parts.length !== 4) continue
-					subnets.add(`${parts[0]}.${parts[1]}.${parts[2]}`)
-				}
-			}
-			if (subnets.size === 0) return
-
-			const ownIps = new Set(
-				Object.values(networkInterfaces()).flat()
-					.filter((i) => i.family === 'IPv4')
-					.map((i) => i.address)
-			)
-
-			for (const subnet of subnets) {
-				if (this._destroyed) break
-				const candidates = []
-				for (let i = 1; i <= 254; i++) {
-					const ip = `${subnet}.${i}`
-					if (!ownIps.has(ip)) candidates.push(ip)
-				}
-				const results = await Promise.all(candidates.map((host) => this._probeSubnetHost(host)))
-				const found = results.filter(Boolean)
-				if (found.length === 0) continue
-				this._mergeProbeResults(found, 'Subnet scan')
-			}
-
-			// Link-local /16 fallback: APIPA assigns addresses randomly in 169.254.0.0/16.
-			// The Mac and Galaxy may land on DIFFERENT /24 blocks, so the normal /24 probe
-			// misses the Galaxy entirely. Scan remaining /24 blocks one at a time until found.
-			// Don't gate on subSock here — we may be in a reconnect loop to a stale IP.
-			const hasLinkLocal = [...subnets].some((s) => s.startsWith('169.254.'))
-			if (hasLinkLocal && !this._destroyed) {
-				const scannedThirds = new Set([...subnets].map((s) => s.split('.')[2]))
-				this.log('info', 'Link-local interface detected — scanning 169.254.0.0/16 for Galaxy')
-				for (let third = 0; third <= 255 && !this._destroyed; third++) {
-					if (scannedThirds.has(String(third))) continue
-					// Stop if we successfully connected mid-scan (first data resets attempts to 0)
-					if (this.subSock && this._reconnectAttempts === 0) break
-					const subnet = `169.254.${third}`
-					const candidates = []
-					for (let i = 1; i <= 254; i++) {
-						const ip = `${subnet}.${i}`
-						if (!ownIps.has(ip)) candidates.push(ip)
-					}
-					const results = await Promise.all(candidates.map((host) => this._probeSubnetHost(host)))
-					const found = results.filter(Boolean)
-					if (found.length === 0) continue
-					this._mergeProbeResults(found, 'Link-local scan')
-					break
-				}
-			}
-		} catch (e) {
-			this.log('debug', `Subnet probe error: ${e?.message}`)
-		} finally {
-			this._subnetProbeInFlight = false
-		}
-	}
-
-	// Merge probe-discovered devices into _mdnsDevices, remapping stale IP entries by device name.
-	//
-	// When the Galaxy changes IP (e.g. DHCP → APIPA link-local), the configured auto_key
-	// (like "lan:192.168.1.5") no longer resolves because _mdnsDevices still holds the old host.
-	// This method detects that case via the _last_device name and updates the old entry's host
-	// in-place, so _resolveHostPortFromConfig continues to work without config changes.
-	_mergeProbeResults(found, logPrefix) {
-		if (!found || found.length === 0) return
-
-		// Try to remap a found device to the configured key if the Galaxy moved to a new IP.
-		const configuredKey = this.config?.auto_key
-		const cachedDevice = this._readCachedDevice()
-		if (configuredKey && !configuredKey.startsWith('virtual:') && cachedDevice?.name) {
-			for (const d of found) {
-				if (!d.name || d.name !== cachedDevice.name) continue
-				const staleIdx = this._mdnsDevices.findIndex((e) => e.key === configuredKey)
-				if (staleIdx >= 0 && this._mdnsDevices[staleIdx].host !== d.host) {
-					// Device moved — update host in existing entry (keep same key/auto_key)
-					this.log(
-						'info',
-						`${logPrefix}: "${d.name}" moved ${this._mdnsDevices[staleIdx].host} → ${d.host}`,
-					)
-					this._mdnsDevices[staleIdx] = { ...this._mdnsDevices[staleIdx], host: d.host }
-				} else if (staleIdx < 0) {
-					// No entry for configured key yet — insert with the configured key so it resolves
-					this._mdnsDevices = [
-						{ ...d, key: configuredKey },
-						...this._mdnsDevices.filter((e) => e.host !== d.host),
-					]
-					this.log('info', `${logPrefix}: found "${d.name}" at ${d.host}`)
-				}
-				break
-			}
-		}
-
-		// Standard merge: update existing entries and add new ones
-		const foundKeys = new Set(found.map((d) => d.key))
-		this._mdnsDevices = [
-			...this._mdnsDevices.filter((d) => !foundKeys.has(d.key)),
-			...found.filter((d) => !this._mdnsDevices.some((e) => e.host === d.host)),
-		]
-		for (const d of found) {
-			this.log('info', `${logPrefix}: found Galaxy "${d.name || d.host}" at ${d.host}`)
-		}
-		this.checkFeedbacks()
-
-		// Trigger connection if auto mode and not already connected/connecting
-		if (this.config?.connection_type === 'auto' && !this.subSock) {
-			const { host: resolvedHost } = this._resolveHostPortFromConfig()
-			if (resolvedHost) this._startSubscribe()
-		}
-	}
-
-	// Like _probeKnownHost but with the shorter SUBNET_PROBE_TIMEOUT_MS for bulk scanning.
-	_probeSubnetHost(host) {
-		return new Promise((resolve) => {
-			const sock = new net.Socket()
-			sock.unref() // Don't prevent process exit while 254-host probes are in flight
-			let resolved = false
-			let buf = ''
-			let lastResult = null
-
-			const cleanup = (result) => {
-				if (resolved) return
-				resolved = true
-				try { sock.destroy() } catch {}
-				resolve(result ?? lastResult ?? null)
-			}
-
-			sock.setTimeout(SUBNET_PROBE_TIMEOUT_MS, () => cleanup(null))
-			sock.on('error', () => cleanup(null))
-			sock.on('close', () => cleanup(null))
-
-			sock.on('data', (chunk) => {
-				buf += chunk.toString('utf8')
-				const parts = buf.split(EOL_SPLIT)
-				buf = parts.pop() ?? ''
-				for (const raw of parts) {
-					const line = raw.trim()
-					if (!line || line.includes('#error')) continue
-					if (line.includes(ENTITY_NAME_PATH)) {
-						const name = this._extractRightHandValue(line) || null
-						lastResult = { key: `lan:${host}`, host, port: DEFAULT_PHYSICAL_PORT, name, model: lastResult?.model ?? null }
-						cleanup(lastResult)
-						return
-					} else if (line.includes(MODEL_STRING_PATH)) {
-						const model = this._extractRightHandValue(line) || null
-						lastResult = { key: `lan:${host}`, host, port: DEFAULT_PHYSICAL_PORT, name: lastResult?.name ?? null, model }
-					}
-				}
-			})
-
-			sock.connect(DEFAULT_PHYSICAL_PORT, host, () => {
-				try {
-					sock.write(Buffer.from(
-						`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}+${MODEL_STRING_PATH}${TX_EOL}${MODEL_STRING_PATH}${TX_EOL}`,
-						'utf8',
-					))
-				} catch {}
-			})
+		this._discoveryHelper.on('ready', (msg) => {
+			const names = (msg.interfaces || []).map((i) => i.name).join(', ')
+			this.log('info', `discovery helper ready on ${names || '<no interfaces>'} (pid=${msg.pid})`)
+			this._refreshDiscoveryStatus()
 		})
+		this._discoveryHelper.on('helper-error', (err) =>
+			this.log('warn', `discovery helper error: ${err}`),
+		)
+		this._discoveryHelper.on('helper-exit', (info) => {
+			if (info.unexpected) this.log('warn', `discovery helper exited (code=${info.code}); restarting`)
+		})
+		this._discoveryHelper.on('device-added',   (dev) => this._onRealDiscovered(dev))
+		this._discoveryHelper.on('device-updated', (dev) => this._onRealDiscovered(dev))
+		this._discoveryHelper.on('device-removed', (dev) => this._onDeviceLost(dev.entity_id))
+		this._discoveryHelper.start()
+
+		// Local: TCP port-probe on 127.0.0.1 for virtual / standalone g2d.
+		this._virtScan = new VirtualGalaxyScanner({ log: (l, m) => this.log(l, m) })
+		this._virtScan.on('virtual-added',   (v) => this._onVirtualDiscovered(v))
+		this._virtScan.on('virtual-updated', (v) => this._onVirtualDiscovered(v))
+		this._virtScan.on('virtual-removed', (v) => this._onDeviceLost(v.entity_id))
+		this._virtScan.start()
 	}
 
-	_disableVirtualDiscovery() {
-		this._virtualDiscoveryEnabled = false
-		clearTimeout(this._virtualScanTimer)
-		clearInterval(this._virtualScanInterval)
-		this._virtualScanTimer = null
-		this._virtualScanInterval = null
-		this._virtualScanInFlight = false
-		for (const [key, sock] of this._virtualWatchers.entries()) {
-			try {
-				sock.destroy()
-			} catch {}
-			this._virtualWatchers.delete(key)
+	_stopDiscovery() {
+		if (this._discoveryStableTimer) {
+			clearInterval(this._discoveryStableTimer)
+			this._discoveryStableTimer = null
 		}
-		for (const timer of this._virtualWatcherTimers.values()) {
-			clearTimeout(timer)
+		if (this._discoveryHelper) {
+			try { this._discoveryHelper.stop() } catch {}
+			this._discoveryHelper = null
 		}
-		this._virtualWatcherTimers.clear()
-	}
-
-	_clampVirtualId(id) {
-		const n = Number(id)
-		if (!Number.isFinite(n)) return null
-		return Math.min(Math.max(n, VIRTUAL_MIN_ID), VIRTUAL_MAX_ID)
-	}
-
-	_virtualPortForId(id) {
-		const clamped = this._clampVirtualId(id)
-		if (clamped === null) return VIRTUAL_BASE_PORT
-		return VIRTUAL_BASE_PORT - (clamped - VIRTUAL_MIN_ID) * VIRTUAL_PORT_STEP
-	}
-
-	_syncVirtualWatchers(devices) {
-		// Don't watcher the device subSock is already connected to — the subscription
-		// stream already delivers name/model updates, and a second connection would
-		// push g2d (or any low-limit device) over its TCP client cap.
-		const { host: subHost, port: subPort } = this._resolveHostPortFromConfig()
-
-		const desiredKeys = new Set()
-		for (const dev of devices) {
-			const key = `${dev.host || DEFAULT_VIRTUAL_HOST}:${dev.port}`
-			desiredKeys.add(key)
-			const sameAsSubSock = dev.host === subHost && dev.port === subPort
-			if (!sameAsSubSock && !this._virtualWatchers.has(key)) {
-				this._startVirtualWatcher(dev)
-			}
-		}
-		// Remove watchers no longer needed
-		for (const key of Array.from(this._virtualWatchers.keys())) {
-			if (!desiredKeys.has(key)) {
-				const sock = this._virtualWatchers.get(key)
-				try {
-					sock.destroy()
-				} catch {}
-				this._virtualWatchers.delete(key)
-			}
+		if (this._virtScan) {
+			try { this._virtScan.stop() } catch {}
+			this._virtScan = null
 		}
 	}
 
-	_startVirtualWatcher(dev) {
-		const key = `${dev.host || DEFAULT_VIRTUAL_HOST}:${dev.port}`
+	_onRealDiscovered(dev) {
+		const key  = dev.entity_id
+		const host = macToIPv6LinkLocal(dev.src_mac, dev.iface || '')
+		const port = DEFAULT_PHYSICAL_PORT
+		const model = modelNameFromEntityModelId(dev.entity_model_id)
+		const prev = this._mdnsDevices.find((d) => d.key === key)
+		const entry = {
+			key, host, port,
+			name: prev?.name || '',
+			model: model || prev?.model || '',
+			serial: prev?.serial || '',
+		}
+		if (prev) Object.assign(prev, entry)
+		else this._mdnsDevices.push(entry)
+
+		this._lastDeviceArrivalAt = Date.now()
+		this._rememberLabel(key, entry.name, entry.model)
+
+		// One-shot entity_name fetch over TCP so the dropdown can show a
+		// friendly label instead of just the model.
+		if (!entry.name) this._fetchEntityNameAsync(key, host, port)
+
+		this._maybeStartSubscribe()
+		this._scheduleActionsRefresh()
+		this._scheduleFeedbacksRefresh()
+		this._scheduleVariablesRefresh()
+		this._refreshDiscoveryStatus()
+	}
+
+	_onVirtualDiscovered(v) {
+		const key  = v.entity_id   // 'virtual:127.0.0.1:50503' (synthesized)
+		const host = v.host
+		const port = v.port
+		const flavour = port === DEFAULT_PHYSICAL_PORT ? 'standalone' : 'virtual'
+		const model = v.model_string ? `${v.model_string} (${flavour})` : modelNameFromEntityModelId(v.entity_model_id)
+		const prev = this._mdnsDevices.find((d) => d.key === key)
+		const entry = {
+			key, host, port,
+			name: v.entity_name || prev?.name || '',
+			model,
+			serial: v.serial_number || prev?.serial || '',
+		}
+		if (prev) Object.assign(prev, entry)
+		else this._mdnsDevices.push(entry)
+
+		this._lastDeviceArrivalAt = Date.now()
+		this._rememberLabel(key, entry.name, entry.model)
+
+		this._maybeStartSubscribe()
+		this._scheduleActionsRefresh()
+		this._scheduleFeedbacksRefresh()
+		this._scheduleVariablesRefresh()
+		this._refreshDiscoveryStatus()
+	}
+
+	_onDeviceLost(key) {
+		const i = this._mdnsDevices.findIndex((d) => d.key === key)
+		if (i < 0) return
+		this._mdnsDevices.splice(i, 1)
+		this._refreshDiscoveryStatus()
+		this._scheduleActionsRefresh()
+		this._scheduleFeedbacksRefresh()
+	}
+
+	_fetchEntityNameAsync(key, host, port) {
+		if (this._nameFetchInflight.has(key)) return
+		this._nameFetchInflight.add(key)
 		const sock = new net.Socket()
-		this._virtualWatchers.set(key, sock)
 		let buf = ''
-
-		const cleanup = () => {
-			try {
-				sock.destroy()
-			} catch {}
-			this._virtualWatchers.delete(key)
+		let done = false
+		const finish = (name) => {
+			if (done) return
+			done = true
+			this._nameFetchInflight.delete(key)
+			try { sock.destroy() } catch {}
+			if (!name) return
+			const cur = this._mdnsDevices.find((d) => d.key === key)
+			if (!cur) return
+			cur.name = name
+			this._rememberLabel(key, name, cur.model)
+			this._scheduleActionsRefresh()
+			this._scheduleFeedbacksRefresh()
+			this._scheduleVariablesRefresh()
 		}
-
-		const scheduleReconnect = () => {
-			if (this._virtualWatcherTimers.has(key)) return
-			const timer = setTimeout(() => {
-				this._virtualWatcherTimers.delete(key)
-				this._startVirtualWatcher(dev)
-			}, 2000)
-			this._virtualWatcherTimers.set(key, timer)
-		}
-
-		sock.setTimeout(2000, () => {
-			cleanup()
-			scheduleReconnect()
-		})
-		sock.on('error', () => {
-			cleanup()
-			scheduleReconnect()
-		})
-		sock.on('close', () => {
-			cleanup()
-			scheduleReconnect()
-		})
-
+		const timer = setTimeout(() => finish(null), 3000)
+		sock.on('error', () => { clearTimeout(timer); finish(null) })
+		sock.on('close', () => { clearTimeout(timer); finish(null) })
 		sock.on('data', (chunk) => {
 			buf += chunk.toString('utf8')
 			const parts = buf.split(EOL_SPLIT)
@@ -4622,262 +4245,114 @@ class ModuleInstance extends InstanceBase {
 				const line = raw.trim()
 				if (!line || line.includes('#error')) continue
 				if (line.includes(ENTITY_NAME_PATH)) {
-					const name = this._extractRightHandValue(line) || null
-					this._updateVirtualDeviceName(dev.port, name)
-				} else if (line.includes(MODEL_STRING_PATH)) {
-					const model = this._extractRightHandValue(line) || null
-					this._updateVirtualDeviceModel(dev.port, model)
+					clearTimeout(timer)
+					const v = this._extractRightHandValue(line) || ''
+					finish(v)
+					return
 				}
 			}
 		})
-
 		try {
-			sock.connect(dev.port, dev.host || DEFAULT_VIRTUAL_HOST, () => {
-				try {
-					sock.write(
-						Buffer.from(
-							`+${ENTITY_NAME_PATH}${TX_EOL}+${MODEL_STRING_PATH}${TX_EOL}`,
-							'utf8',
-						),
-					)
-				} catch {}
-			})
-		} catch {
-			cleanup()
-			scheduleReconnect()
-		}
-	}
-
-	_updateVirtualDeviceName(port, name) {
-		let changed = false
-		for (const dev of this._virtualDevices) {
-			if (dev.port === port) {
-				if (dev.name !== name && name) {
-					dev.name = name
-					changed = true
-				}
-			}
-		}
-		if (changed) {
-			// no-op trigger; config fields re-render when reopened
-			this._virtualDevices = [...this._virtualDevices]
-		}
-	}
-
-	_updateVirtualDeviceModel(port, model) {
-		let changed = false
-		for (const dev of this._virtualDevices) {
-			if (dev.port === port) {
-				if (dev.model !== model && model) {
-					dev.model = model
-					changed = true
-				}
-			}
-		}
-		if (changed) {
-			this._virtualDevices = [...this._virtualDevices]
-		}
-	}
-
-	_startVirtualDiscoveryLoop() {
-		if (!this._virtualDiscoveryEnabled) return
-		this._disableVirtualDiscovery()
-		this._virtualDiscoveryEnabled = true
-		// Immediate scan
-		this._runVirtualDiscovery().catch((err) => {
-			this.log?.('debug', `Virtual discovery failed: ${err?.message || err}`)
-		})
-		// Periodic scans
-		this._virtualScanInterval = setInterval(() => {
-			this._runVirtualDiscovery().catch((err) => {
-				this.log?.('debug', `Virtual discovery failed: ${err?.message || err}`)
-			})
-		}, VIRTUAL_SCAN_INTERVAL_MS)
-	}
-
-	async _runVirtualDiscovery() {
-		if (!this._virtualDiscoveryEnabled || this._virtualScanInFlight) return
-		this._virtualScanInFlight = true
-		try {
-			const devices = await this._detectVirtualDevices()
-			this._virtualDevices = devices
-			this._syncVirtualWatchers(devices)
-		} catch (err) {
-			this.log?.('debug', `Virtual discovery failed: ${err?.message || err}`)
-		} finally {
-			this._virtualScanInFlight = false
-		}
-	}
-
-	async _detectVirtualDevices() {
-		const probes = []
-
-		// Probe localhost:25003 for a manually-launched g2d instance (`g2d g2d`).
-		// Skip the probe if subSock is already connected there — the device is known alive
-		// and an extra probe connection would steal one of g2d's limited TCP slots.
-		const activeHost = this._connectedCached ? this._resolveHostPortFromConfig() : null
-		const alreadyConnectedToG2d =
-			activeHost &&
-			(activeHost.host === '127.0.0.1' || activeHost.host === '::1' || activeHost.host === 'localhost') &&
-			activeHost.port === DEFAULT_PHYSICAL_PORT
-		if (!alreadyConnectedToG2d) {
-			probes.push(this._probeVirtualHostPort('127.0.0.1', DEFAULT_PHYSICAL_PORT, 0))
-		} else if (this._connectedCached) {
-			// Already connected — keep the existing entry in the list without re-probing
-			const existing = (this._virtualDevices || []).find((d) => d.id === 0)
-			if (existing) probes.push(Promise.resolve(existing))
-		}
-
-		// Probe the Compass virtual-Galaxy port range (50503, 50403, …)
-		for (let id = VIRTUAL_MIN_ID; id <= VIRTUAL_MAX_ID; id++) {
-			probes.push(this._probeVirtualId(id))
-		}
-
-		const results = await Promise.all(probes)
-		const filtered = results.filter((r) => !!r)
-		const uniqueById = []
-		const seen = new Set()
-		for (const dev of filtered) {
-			if (seen.has(dev.id)) continue
-			seen.add(dev.id)
-			uniqueById.push(dev)
-		}
-		return uniqueById
-	}
-
-	async _probeVirtualId(id) {
-		const port = this._virtualPortForId(id)
-		const hosts = [DEFAULT_VIRTUAL_HOST, '::1', 'localhost']
-
-		for (const host of hosts) {
-			const res = await this._probeVirtualHostPort(host, port, id)
-			if (res) return res
-		}
-		return null
-	}
-
-	_probeVirtualHostPort(host, port, id) {
-		return new Promise((resolve) => {
-			const sock = new net.Socket()
-			let resolved = false
-			let fallbackTimer = null
-			let lastResult = null
-
-			const cleanup = (result) => {
-				if (resolved) return
-				resolved = true
-				clearTimeout(fallbackTimer)
-				try {
-					sock.destroy()
-				} catch {}
-				resolve(result ?? lastResult ?? null)
-			}
-
-			sock.setTimeout(600, () => cleanup(null))
-			sock.on('error', () => cleanup(null))
-			sock.on('close', () => cleanup(null))
-
-			let buf = ''
-			sock.on('data', (chunk) => {
-				buf += chunk.toString('utf8')
-				const parts = buf.split(EOL_SPLIT)
-				buf = parts.pop() ?? ''
-				for (const raw of parts) {
-					const line = raw.trim()
-					if (!line || line.includes('#error')) continue
-					if (line.includes(ENTITY_NAME_PATH)) {
-						const name = this._extractRightHandValue(line) || null
-						lastResult = { id, port, host, name, model: lastResult?.model ?? null }
-						cleanup(lastResult)
-						return
-					} else if (line.includes(MODEL_STRING_PATH)) {
-						const model = this._extractRightHandValue(line) || null
-						lastResult = { id, port, host, name: lastResult?.name ?? null, model }
-					}
-				}
-			})
-
 			sock.connect(port, host, () => {
-				fallbackTimer = setTimeout(() => cleanup(lastResult), 200)
-				try {
-					sock.write(
-						Buffer.from(
-							`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}+${MODEL_STRING_PATH}${TX_EOL}${MODEL_STRING_PATH}${TX_EOL}`,
-							'utf8',
-						),
-					)
-				} catch {
-					// ignore
-				}
+				try { sock.write(Buffer.from(`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}`, 'utf8')) }
+				catch { finish(null) }
 			})
-		})
+		} catch { finish(null) }
 	}
 
-	// ---- Connection resolver (physical + virtual) ----
-	_resolveHostPortFromConfig() {
-		const connectionType = this.config?.connection_type || 'auto'
-
-		if (connectionType === 'auto') {
-			const key = this.config?.auto_key || ''
-
-			// Virtual device: key = 'virtual:<id>'
-			if (key.startsWith('virtual:')) {
-				const virtualId = Number(key.slice('virtual:'.length))
-				const cached = (this._virtualDevices || []).find((d) => d.id === virtualId)
-				if (cached) return { host: cached.host || DEFAULT_VIRTUAL_HOST, port: cached.port }
-				// ID 0 = fake Galaxy (g2d g2d) — always on the standard physical port
-				if (virtualId === 0) return { host: DEFAULT_VIRTUAL_HOST, port: DEFAULT_PHYSICAL_PORT }
-				// Compass virtual Galaxy: compute port from ID
-				const clamped = this._clampVirtualId(virtualId) ?? VIRTUAL_MIN_ID
-				return { host: DEFAULT_VIRTUAL_HOST, port: this._virtualPortForId(clamped) }
+	_rememberLabel(key, name, model) {
+		if (!key) return
+		const cur = this._lastKnownLabels.get(key) || {}
+		const merged = {
+			name:  name  || cur.name  || '',
+			model: model || cur.model || '',
+		}
+		this._lastKnownLabels.set(key, merged)
+		if (key === this.config?.auto_key) {
+			const encoded = `${merged.name}|${merged.model}`
+			if (this.config?._remembered_label !== encoded) {
+				const next = { ...this.config, _remembered_label: encoded }
+				this.config = next
+				try { this.saveConfig(next) } catch {}
 			}
-
-			// Real device: look up in mDNS/LAN list
-			const device = (this._mdnsDevices || []).find((d) => d.key === key)
-			if (!device) return { host: null, port: null }
-			return { host: device.host, port: device.port }
 		}
+	}
 
-		const rawHost = this.config?.host
-		if (!rawHost || typeof rawHost !== 'string' || rawHost.trim() === '') {
-			return { host: null, port: null }
+	/** Choice list for the "Galaxy to control" dropdown. */
+	_galaxyChoiceList() {
+		const isVirtual = (d) => d.key && d.key.startsWith('virtual:')
+		const list = [...this._mdnsDevices].sort((a, b) => {
+			const av = isVirtual(a), bv = isVirtual(b)
+			if (av !== bv) return av ? 1 : -1
+			return (a.name || '').localeCompare(b.name || '')
+		})
+		const choices = [{ id: '', label: '(none)' }]
+		for (const d of list) {
+			const name = d.name || '(unnamed)'
+			choices.push({ id: d.key, label: `${name} · ${d.model || 'Galaxy'}` })
 		}
-
-		let host = rawHost.trim()
-		let port = Number(this.config?.port)
-		if (!Number.isFinite(port)) {
-			port = DEFAULT_PHYSICAL_PORT
+		// Selected but currently offline → surface an "(offline)" entry so
+		// Companion's dropdown shows a label instead of "??".
+		const sel = this.config?.auto_key
+		if (sel && !list.some((d) => d.key === sel)) {
+			const cached = this._lastKnownLabels.get(sel)
+			const name  = cached?.name  || '(unknown)'
+			const model = cached?.model || ''
+			choices.push({
+				id: sel,
+				label: `${name}${model ? ' · ' + model : ''} (offline)`,
+			})
 		}
+		return choices
+	}
 
-		// Allow IPv6 literals with brackets and host fields that include a port
-		if (host.startsWith('[')) {
-			const match = host.match(/^\[([^\]]+)\]:(\d+)$/)
-			if (match) {
-				host = match[1].trim()
-				port = Number(match[2])
-			} else if (host.endsWith(']')) {
-				host = host.slice(1, -1).trim()
-			}
+	/** Status: spinner while discovering, green only when actually subscribed. */
+	_refreshDiscoveryStatus() {
+		const n = this._mdnsDevices.length
+		if (!this._discoveryStable) {
+			this.updateStatus(
+				InstanceStatus.Connecting,
+				`Discovery in progress — ${n} Galaxy${n === 1 ? '' : 's'} found…`,
+			)
+			return
+		}
+		if (!this.config?.auto_key) {
+			this.updateStatus(
+				InstanceStatus.Disconnected,
+				`Ready — ${n} Galaxy${n === 1 ? '' : 's'} discovered, pick one to control`,
+			)
+			return
+		}
+		const dev = this._mdnsDevices.find((d) => d.key === this.config.auto_key)
+		if (!dev) {
+			this.updateStatus(InstanceStatus.Disconnected, 'Selected Galaxy is offline')
+			return
+		}
+		if (this.subSock) {
+			this.updateStatus(InstanceStatus.Ok, `${dev.name || dev.model} @ ${dev.host}:${dev.port}`)
 		} else {
-			const firstColon = host.indexOf(':')
-			const lastColon = host.lastIndexOf(':')
-			// If there is exactly one colon, treat it as a host:port separator (IPv4/hostname)
-			if (firstColon === lastColon && firstColon > 0) {
-				const maybePort = Number(host.substring(lastColon + 1))
-				if (Number.isFinite(maybePort)) {
-					port = maybePort
-					host = host.substring(0, lastColon).trim()
-				}
-			}
+			this.updateStatus(InstanceStatus.Connecting, `Connecting to ${dev.name || dev.model}…`)
 		}
+	}
 
-		if (!host) {
-			return { host: null, port: null }
-		}
-		if (!Number.isFinite(port) || port < 1 || port > 65535) {
-			port = DEFAULT_PHYSICAL_PORT
-		}
-		return { host, port }
+	/** Fire `_startSubscribe()` if (a) user has selected a Galaxy, (b) that
+	 *  Galaxy is currently discovered, (c) we don't already have a subSock. */
+	_maybeStartSubscribe() {
+		if (this._destroyed) return
+		if (this.subSock) return
+		if (!this.config?.auto_key) return
+		const dev = this._mdnsDevices.find((d) => d.key === this.config.auto_key)
+		if (!dev || !dev.host || !dev.port) return
+		this._startSubscribe()
+	}
+
+	/** Resolve host/port from the currently-selected Galaxy entry. */
+	_resolveHostPortFromConfig() {
+		const key = this.config?.auto_key
+		if (!key) return { host: null, port: null }
+		const d = this._mdnsDevices.find((d) => d.key === key)
+		if (!d) return { host: null, port: null }
+		return { host: d.host, port: d.port }
 	}
 }
 
