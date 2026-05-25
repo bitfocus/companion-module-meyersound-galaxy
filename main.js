@@ -357,7 +357,9 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	async configUpdated(config) {
-		const prevKey = this.config?.auto_key
+		const prevKey  = this.config?.auto_key
+		const prevHost = this.config?.manual_host
+		const prevPort = this.config?.manual_port
 		this.config = config
 
 		this.updateActions()
@@ -377,9 +379,14 @@ class ModuleInstance extends InstanceBase {
 		clearTimeout(this._variablesRefreshTimer); this._variablesRefreshTimer = null
 		clearTimeout(this._meterFlushTimer);       this._meterFlushTimer = null
 
-		// If the user picked a different Galaxy, tear down the current
-		// subscription socket; we'll reconnect to the new target below.
-		if (config.auto_key !== prevKey) {
+		// Reconnect if the target changed: either the dropdown selection, or
+		// (when in manual mode) the typed host/port.
+		const targetChanged =
+			config.auto_key !== prevKey ||
+			(config.auto_key === '__manual__' &&
+				(config.manual_host !== prevHost || config.manual_port !== prevPort))
+
+		if (targetChanged) {
 			try { this.subSock?.destroy() } catch {}
 			this.subSock = null
 			clearTimeout(this.cmdTimer); this.cmdTimer = null
@@ -394,6 +401,7 @@ class ModuleInstance extends InstanceBase {
 		this.fanStatus = {}
 
 		this._maybeStartSubscribe()
+		this._refreshDiscoveryStatus()
 	}
 
 	// -------- Config UI --------
@@ -409,15 +417,42 @@ class ModuleInstance extends InstanceBase {
 					'⚠️ Wait for the orange spinner next to this connection ' +
 					'(left side of the row) to stop turning before opening the ' +
 					'dropdown below. While the spinner is on, discovery is still ' +
-					'gathering Galaxys and the list may be incomplete.',
+					'gathering Galaxys and the list may be incomplete. If you ' +
+					'cannot find your Galaxy in the dropdown for any reason, pick ' +
+					'"(manual IP / hostname)" and type its address below.',
 			},
 			{
 				type: 'dropdown',
 				id: 'auto_key',
 				label: 'Galaxy to control',
 				width: 12,
-				default: choices[1]?.id ?? '',
+				default: '',
 				choices,
+			},
+			// Manual-entry fallback (visible only when "(manual IP / hostname)"
+			// is picked in the dropdown above). Supports IPv4, IPv6, hostnames,
+			// and `host:port` or `[ipv6]:port` shorthand.
+			{
+				type: 'textinput',
+				id: 'manual_host',
+				label: 'IP / hostname',
+				width: 8,
+				default: '',
+				tooltip:
+					'IPv4 (192.168.1.10), IPv6 ([fe80::1%en15] or fe80::1%en15), ' +
+					'or hostname. Append :port to override the default 25003.',
+				isVisible: (options) => options.auto_key === '__manual__',
+			},
+			{
+				type: 'number',
+				id: 'manual_port',
+				label: 'Port',
+				width: 4,
+				default: DEFAULT_PHYSICAL_PORT,
+				min: 1,
+				max: 65535,
+				step: 1,
+				isVisible: (options) => options.auto_key === '__manual__',
 			},
 			// Hidden cache for the picked Galaxy's last-known "name|model" so
 			// the dropdown shows a real label when the device is offline.
@@ -4286,7 +4321,10 @@ class ModuleInstance extends InstanceBase {
 			if (av !== bv) return av ? 1 : -1
 			return (a.name || '').localeCompare(b.name || '')
 		})
-		const choices = [{ id: '', label: '(none)' }]
+		const choices = [
+			{ id: '', label: '(none)' },
+			{ id: '__manual__', label: '(manual IP / hostname)' },
+		]
 		for (const d of list) {
 			const name = d.name || '(unnamed)'
 			choices.push({ id: d.key, label: `${name} · ${d.model || 'Galaxy'}` })
@@ -4294,7 +4332,7 @@ class ModuleInstance extends InstanceBase {
 		// Selected but currently offline → surface an "(offline)" entry so
 		// Companion's dropdown shows a label instead of "??".
 		const sel = this.config?.auto_key
-		if (sel && !list.some((d) => d.key === sel)) {
+		if (sel && sel !== '__manual__' && !list.some((d) => d.key === sel)) {
 			const cached = this._lastKnownLabels.get(sel)
 			const name  = cached?.name  || '(unknown)'
 			const model = cached?.model || ''
@@ -4304,6 +4342,44 @@ class ModuleInstance extends InstanceBase {
 			})
 		}
 		return choices
+	}
+
+	/** Parse a "host" / "host:port" / "[ipv6]:port" / "[ipv6]" string into
+	 *  {host, port}, falling back to `defaultPort` when no port is given.
+	 *  Returns {host:null, port:null} when input is empty. */
+	_parseManualHost(input, defaultPort) {
+		const raw = (input || '').trim()
+		if (!raw) return { host: null, port: null }
+
+		let host = raw
+		let port = Number(defaultPort) || DEFAULT_PHYSICAL_PORT
+
+		if (host.startsWith('[')) {
+			const m = host.match(/^\[([^\]]+)\]:(\d+)$/)
+			if (m) {
+				host = m[1].trim()
+				port = Number(m[2])
+			} else if (host.endsWith(']')) {
+				host = host.slice(1, -1).trim()
+			}
+		} else {
+			const firstColon = host.indexOf(':')
+			const lastColon = host.lastIndexOf(':')
+			// One-colon = IPv4/hostname with port. Multiple colons = bare IPv6.
+			if (firstColon === lastColon && firstColon > 0) {
+				const maybe = Number(host.substring(lastColon + 1))
+				if (Number.isFinite(maybe)) {
+					port = maybe
+					host = host.substring(0, lastColon).trim()
+				}
+			}
+		}
+
+		if (!host) return { host: null, port: null }
+		if (!Number.isFinite(port) || port < 1 || port > 65535) {
+			port = DEFAULT_PHYSICAL_PORT
+		}
+		return { host, port }
 	}
 
 	/** Status priority (highest first):
@@ -4318,8 +4394,29 @@ class ModuleInstance extends InstanceBase {
 	 *  status — that was the cosmetic bug in the first deploy. */
 	_refreshDiscoveryStatus() {
 		const sel = this.config?.auto_key
-		const dev = sel ? this._mdnsDevices.find((d) => d.key === sel) : null
 		const n = this._mdnsDevices.length
+
+		// Manual-entry mode: discovery state is irrelevant, the user typed
+		// the address. Status comes purely from what the typed host is and
+		// whether we have a live subscription.
+		if (sel === '__manual__') {
+			const { host, port } = this._parseManualHost(
+				this.config?.manual_host,
+				this.config?.manual_port,
+			)
+			if (this.subSock && host) {
+				this.updateStatus(InstanceStatus.Ok, `Manual ${host}:${port}`)
+				return
+			}
+			if (!host) {
+				this.updateStatus(InstanceStatus.BadConfig, 'Manual mode — enter IP / hostname')
+				return
+			}
+			this.updateStatus(InstanceStatus.Connecting, `Connecting to ${host}:${port}…`)
+			return
+		}
+
+		const dev = sel ? this._mdnsDevices.find((d) => d.key === sel) : null
 
 		// 1. We're already subscribed to the selected Galaxy — that wins.
 		if (this.subSock && dev) {
@@ -4355,20 +4452,26 @@ class ModuleInstance extends InstanceBase {
 		this.updateStatus(InstanceStatus.Connecting, `Connecting to ${dev.name || dev.model}…`)
 	}
 
-	/** Fire `_startSubscribe()` if (a) user has selected a Galaxy, (b) that
-	 *  Galaxy is currently discovered, (c) we don't already have a subSock. */
+	/** Fire `_startSubscribe()` once we have a usable host/port and no
+	 *  active subSock — works for both auto-discovered and manual paths. */
 	_maybeStartSubscribe() {
 		if (this._destroyed) return
 		if (this.subSock) return
-		if (!this.config?.auto_key) return
-		const dev = this._mdnsDevices.find((d) => d.key === this.config.auto_key)
-		if (!dev || !dev.host || !dev.port) return
+		const { host, port } = this._resolveHostPortFromConfig()
+		if (!host || !port) return
 		this._startSubscribe()
 	}
 
-	/** Resolve host/port from the currently-selected Galaxy entry. */
+	/** Resolve host/port from the currently-selected dropdown entry, with
+	 *  the manual-IP fallback when "(manual IP / hostname)" is picked. */
 	_resolveHostPortFromConfig() {
 		const key = this.config?.auto_key
+		if (key === '__manual__') {
+			return this._parseManualHost(
+				this.config?.manual_host,
+				this.config?.manual_port,
+			)
+		}
 		if (!key) return { host: null, port: null }
 		const d = this._mdnsDevices.find((d) => d.key === key)
 		if (!d) return { host: null, port: null }
