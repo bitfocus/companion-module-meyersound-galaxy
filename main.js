@@ -359,7 +359,6 @@ class ModuleInstance extends InstanceBase {
 	async configUpdated(config) {
 		const prevKey  = this.config?.auto_key
 		const prevHost = this.config?.manual_host
-		const prevPort = this.config?.manual_port
 		this.config = config
 
 		this.updateActions()
@@ -383,8 +382,7 @@ class ModuleInstance extends InstanceBase {
 		// (when in manual mode) the typed host/port.
 		const targetChanged =
 			config.auto_key !== prevKey ||
-			(config.auto_key === '__manual__' &&
-				(config.manual_host !== prevHost || config.manual_port !== prevPort))
+			(config.auto_key === '__manual__' && config.manual_host !== prevHost)
 
 		if (targetChanged) {
 			try { this.subSock?.destroy() } catch {}
@@ -436,22 +434,11 @@ class ModuleInstance extends InstanceBase {
 				type: 'textinput',
 				id: 'manual_host',
 				label: 'IP / hostname',
-				width: 8,
+				width: 12,
 				default: '',
 				tooltip:
 					'IPv4 (192.168.1.10), IPv6 ([fe80::1%en15] or fe80::1%en15), ' +
-					'or hostname. Append :port to override the default 25003.',
-				isVisible: (options) => options.auto_key === '__manual__',
-			},
-			{
-				type: 'number',
-				id: 'manual_port',
-				label: 'Port',
-				width: 4,
-				default: DEFAULT_PHYSICAL_PORT,
-				min: 1,
-				max: 65535,
-				step: 1,
+					'or hostname. Galaxy always listens on TCP port 25003.',
 				isVisible: (options) => options.auto_key === '__manual__',
 			},
 			// Hidden cache for the picked Galaxy's last-known "name|model" so
@@ -4344,42 +4331,29 @@ class ModuleInstance extends InstanceBase {
 		return choices
 	}
 
-	/** Parse a "host" / "host:port" / "[ipv6]:port" / "[ipv6]" string into
-	 *  {host, port}, falling back to `defaultPort` when no port is given.
-	 *  Returns {host:null, port:null} when input is empty. */
-	_parseManualHost(input, defaultPort) {
+	/** Parse a "host" / "[ipv6]" / "host:port" / "[ipv6]:port" string. Port
+	 *  is always 25003 — the suffix is stripped if present, since the user
+	 *  may type something like `192.168.1.10:25003` out of habit. */
+	_parseManualHost(input) {
 		const raw = (input || '').trim()
 		if (!raw) return { host: null, port: null }
 
 		let host = raw
-		let port = Number(defaultPort) || DEFAULT_PHYSICAL_PORT
-
 		if (host.startsWith('[')) {
-			const m = host.match(/^\[([^\]]+)\]:(\d+)$/)
-			if (m) {
-				host = m[1].trim()
-				port = Number(m[2])
-			} else if (host.endsWith(']')) {
-				host = host.slice(1, -1).trim()
-			}
+			const m = host.match(/^\[([^\]]+)\](:\d+)?$/)
+			if (m) host = m[1].trim()
 		} else {
+			// One colon = IPv4/hostname with port (strip the port). Multiple
+			// colons = bare IPv6 (leave alone).
 			const firstColon = host.indexOf(':')
-			const lastColon = host.lastIndexOf(':')
-			// One-colon = IPv4/hostname with port. Multiple colons = bare IPv6.
+			const lastColon  = host.lastIndexOf(':')
 			if (firstColon === lastColon && firstColon > 0) {
-				const maybe = Number(host.substring(lastColon + 1))
-				if (Number.isFinite(maybe)) {
-					port = maybe
-					host = host.substring(0, lastColon).trim()
-				}
+				host = host.substring(0, lastColon).trim()
 			}
 		}
 
 		if (!host) return { host: null, port: null }
-		if (!Number.isFinite(port) || port < 1 || port > 65535) {
-			port = DEFAULT_PHYSICAL_PORT
-		}
-		return { host, port }
+		return { host, port: DEFAULT_PHYSICAL_PORT }
 	}
 
 	/** Status priority (highest first):
@@ -4400,10 +4374,7 @@ class ModuleInstance extends InstanceBase {
 		// the address. Status comes purely from what the typed host is and
 		// whether we have a live subscription.
 		if (sel === '__manual__') {
-			const { host, port } = this._parseManualHost(
-				this.config?.manual_host,
-				this.config?.manual_port,
-			)
+			const { host, port } = this._parseManualHost(this.config?.manual_host)
 			if (this.subSock && host) {
 				this.updateStatus(InstanceStatus.Ok, `Manual ${host}:${port}`)
 				return
@@ -4467,10 +4438,7 @@ class ModuleInstance extends InstanceBase {
 	_resolveHostPortFromConfig() {
 		const key = this.config?.auto_key
 		if (key === '__manual__') {
-			return this._parseManualHost(
-				this.config?.manual_host,
-				this.config?.manual_port,
-			)
+			return this._parseManualHost(this.config?.manual_host)
 		}
 		if (!key) return { host: null, port: null }
 		const d = this._mdnsDevices.find((d) => d.key === key)
