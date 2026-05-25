@@ -74,6 +74,7 @@ typedef struct {
     char     name[IFNAMSIZ];
     int      fd;
     uint8_t  src_mac[6];
+    int      dead;          /* set once read() reports the iface has gone   */
 #if defined(__APPLE__)
     u_int    bpf_bufsize;
 #elif defined(__linux__)
@@ -278,6 +279,7 @@ static int send_discover_on_all(uint64_t target_entity_id) {
     int sent = 0;
     uint8_t frame[ADP_FRAME_LEN];
     for (int i = 0; i < N_IFACES; i++) {
+        if (IFACES[i].dead || IFACES[i].fd < 0) continue;
         build_entity_discover_frame(frame, IFACES[i].src_mac, target_entity_id);
         if (send_frame(&IFACES[i], frame, ADP_FRAME_LEN) == 0) sent++;
     }
@@ -452,6 +454,7 @@ int main(int argc, char **argv) {
         fd_set rfds; FD_ZERO(&rfds);
         int maxfd = STDIN_FILENO;
         for (int i = 0; i < N_IFACES; i++) {
+            if (IFACES[i].dead || IFACES[i].fd < 0) continue;
             FD_SET(IFACES[i].fd, &rfds);
             if (IFACES[i].fd > maxfd) maxfd = IFACES[i].fd;
         }
@@ -474,6 +477,7 @@ int main(int argc, char **argv) {
         if (rc == 0) continue;          /* timeout — loop back, may send discover */
 
         for (int i = 0; i < N_IFACES; i++) {
+            if (IFACES[i].dead || IFACES[i].fd < 0) continue;
             if (!FD_ISSET(IFACES[i].fd, &rfds)) continue;
             ssize_t n = read(IFACES[i].fd, pktbuf, pktbuf_cap);
             if (n > 0) {
@@ -483,7 +487,15 @@ int main(int argc, char **argv) {
                 handle_frame(IFACES[i].name, pktbuf, (size_t)n);
 #endif
             } else if (n < 0 && errno != EINTR && errno != EAGAIN) {
-                emit_error("read(%s): %s", IFACES[i].name, strerror(errno));
+                /* ENXIO / ENODEV / EIO / EBADF all mean the interface or
+                 * BPF descriptor is gone (Thunderbolt unplug, VM stopped,
+                 * Wi-Fi disabled). Close + flag so we don't spin forever
+                 * emitting the same error on every select() iteration. */
+                emit_error("read(%s): %s — removing from listen set",
+                           IFACES[i].name, strerror(errno));
+                close(IFACES[i].fd);
+                IFACES[i].fd = -1;
+                IFACES[i].dead = 1;
             }
         }
 
@@ -503,6 +515,8 @@ int main(int argc, char **argv) {
     }
 
     free(pktbuf);
-    for (int i = 0; i < N_IFACES; i++) close(IFACES[i].fd);
+    for (int i = 0; i < N_IFACES; i++) {
+        if (IFACES[i].fd >= 0) close(IFACES[i].fd);
+    }
     return 0;
 }

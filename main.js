@@ -4116,9 +4116,9 @@ class ModuleInstance extends InstanceBase {
 			this.log('info', `discovery helper ready on ${names || '<no interfaces>'} (pid=${msg.pid})`)
 			this._refreshDiscoveryStatus()
 		})
-		this._discoveryHelper.on('helper-error', (err) =>
-			this.log('warn', `discovery helper error: ${err}`),
-		)
+		// `helper-error` is also logged by DiscoveryHelper itself — we only
+		// need to react here when we want to do something beyond logging.
+		this._discoveryHelper.on('helper-error', () => { /* already logged */ })
 		this._discoveryHelper.on('helper-exit', (info) => {
 			if (info.unexpected) this.log('warn', `discovery helper exited (code=${info.code}); restarting`)
 		})
