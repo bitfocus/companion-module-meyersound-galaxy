@@ -4306,9 +4306,28 @@ class ModuleInstance extends InstanceBase {
 		return choices
 	}
 
-	/** Status: spinner while discovering, green only when actually subscribed. */
+	/** Status priority (highest first):
+	 *   1. Subscribed to selected Galaxy   → Ok (green)
+	 *   2. Discovery still settling         → Connecting (orange spinner)
+	 *   3. No Galaxy picked                 → Disconnected
+	 *   4. Picked but currently offline     → Disconnected
+	 *   5. Picked, online, TCP handshaking  → Connecting
+	 *
+	 *  Once we're subscribed, discovery-in-progress events from OTHER
+	 *  Galaxys arriving later must not override the green "subscribed"
+	 *  status — that was the cosmetic bug in the first deploy. */
 	_refreshDiscoveryStatus() {
+		const sel = this.config?.auto_key
+		const dev = sel ? this._mdnsDevices.find((d) => d.key === sel) : null
 		const n = this._mdnsDevices.length
+
+		// 1. We're already subscribed to the selected Galaxy — that wins.
+		if (this.subSock && dev) {
+			this.updateStatus(InstanceStatus.Ok, `${dev.name || dev.model} @ ${dev.host}:${dev.port}`)
+			return
+		}
+
+		// 2. Initial discovery still in progress (no subscription yet).
 		if (!this._discoveryStable) {
 			this.updateStatus(
 				InstanceStatus.Connecting,
@@ -4316,23 +4335,24 @@ class ModuleInstance extends InstanceBase {
 			)
 			return
 		}
-		if (!this.config?.auto_key) {
+
+		// 3. Discovery done but user hasn't picked.
+		if (!sel) {
 			this.updateStatus(
 				InstanceStatus.Disconnected,
 				`Ready — ${n} Galaxy${n === 1 ? '' : 's'} discovered, pick one to control`,
 			)
 			return
 		}
-		const dev = this._mdnsDevices.find((d) => d.key === this.config.auto_key)
+
+		// 4. Picked but currently offline.
 		if (!dev) {
 			this.updateStatus(InstanceStatus.Disconnected, 'Selected Galaxy is offline')
 			return
 		}
-		if (this.subSock) {
-			this.updateStatus(InstanceStatus.Ok, `${dev.name || dev.model} @ ${dev.host}:${dev.port}`)
-		} else {
-			this.updateStatus(InstanceStatus.Connecting, `Connecting to ${dev.name || dev.model}…`)
-		}
+
+		// 5. Picked, online, but no subSock yet (TCP handshake in flight).
+		this.updateStatus(InstanceStatus.Connecting, `Connecting to ${dev.name || dev.model}…`)
 	}
 
 	/** Fire `_startSubscribe()` if (a) user has selected a Galaxy, (b) that
