@@ -417,7 +417,8 @@ class ModuleInstance extends InstanceBase {
 					'dropdown below. While the spinner is on, discovery is still ' +
 					'gathering Galaxys and the list may be incomplete. If you ' +
 					'cannot find your Galaxy in the dropdown for any reason, pick ' +
-					'"(manual IP / hostname)" and type its address below.',
+					'"(manual address)" and type the IPv4, IPv6, or Meyer mDNS ' +
+					'address (Device Name . Device Group Name) below.',
 			},
 			{
 				type: 'dropdown',
@@ -427,18 +428,23 @@ class ModuleInstance extends InstanceBase {
 				default: '',
 				choices,
 			},
-			// Manual-entry fallback (visible only when "(manual IP / hostname)"
-			// is picked in the dropdown above). Supports IPv4, IPv6, hostnames,
-			// and `host:port` or `[ipv6]:port` shorthand.
+			// Manual-entry fallback (visible only when "(manual address)" is
+			// picked above). Per Meyer's GALAXY programming guide, Galaxy
+			// accepts three address forms — all on TCP port 25003:
+			//   • IPv4:  192.168.1.10
+			//   • IPv6:  fe80::21c:abff:fe01:1a54%en15  (or [..]:25003)
+			//   • mDNS:  <Device Name>.<Device Group Name>  (we append .local)
 			{
 				type: 'textinput',
 				id: 'manual_host',
-				label: 'IP / hostname',
+				label: 'IPv4 / IPv6 / mDNS address',
 				width: 12,
 				default: '',
 				tooltip:
-					'IPv4 (192.168.1.10), IPv6 ([fe80::1%en15] or fe80::1%en15), ' +
-					'or hostname. Galaxy always listens on TCP port 25003.',
+					'Any one of: IPv4 (192.168.1.10), IPv6 (fe80::1%en15 or [fe80::1%en15]), ' +
+					'or Meyer mDNS "<Device Name>.<Device Group Name>" — for the mDNS form ' +
+					'we append .local automatically (example: MyGalaxy.MyGroup). ' +
+					'Galaxy always listens on TCP port 25003.',
 				isVisible: (options) => options.auto_key === '__manual__',
 			},
 			// Hidden cache for the picked Galaxy's last-known "name|model" so
@@ -4310,7 +4316,7 @@ class ModuleInstance extends InstanceBase {
 		})
 		const choices = [
 			{ id: '', label: '(none)' },
-			{ id: '__manual__', label: '(manual IP / hostname)' },
+			{ id: '__manual__', label: '(manual address)' },
 		]
 		for (const d of list) {
 			const name = d.name || '(unnamed)'
@@ -4331,28 +4337,46 @@ class ModuleInstance extends InstanceBase {
 		return choices
 	}
 
-	/** Parse a "host" / "[ipv6]" / "host:port" / "[ipv6]:port" string. Port
-	 *  is always 25003 — the suffix is stripped if present, since the user
-	 *  may type something like `192.168.1.10:25003` out of habit. */
+	/** Parse the user-entered mDNS components and return a resolvable
+	 *  hostname. Accepts:
+	 *      "MyGalaxy.MyGroup"             → MyGalaxy.MyGroup.local
+	 *      "MyGalaxy.MyGroup.local"       → MyGalaxy.MyGroup.local
+	 *      "MyGalaxy.MyGroup.local:25003" → MyGalaxy.MyGroup.local
+	 *  IPv4 / IPv6 / bracketed inputs are passed through unchanged (no
+	 *  ".local" appended) so that an IP saved in an older version of this
+	 *  module keeps working after the field semantics changed. */
 	_parseManualHost(input) {
-		const raw = (input || '').trim()
-		if (!raw) return { host: null, port: null }
+		let host = (input || '').trim()
+		if (!host) return { host: null, port: null }
 
-		let host = raw
+		// Strip "[ipv6%scope](:port)" form.
 		if (host.startsWith('[')) {
 			const m = host.match(/^\[([^\]]+)\](:\d+)?$/)
-			if (m) host = m[1].trim()
-		} else {
-			// One colon = IPv4/hostname with port (strip the port). Multiple
-			// colons = bare IPv6 (leave alone).
-			const firstColon = host.indexOf(':')
-			const lastColon  = host.lastIndexOf(':')
-			if (firstColon === lastColon && firstColon > 0) {
-				host = host.substring(0, lastColon).trim()
-			}
+			if (m) return { host: m[1].trim(), port: DEFAULT_PHYSICAL_PORT }
 		}
 
-		if (!host) return { host: null, port: null }
+		// Bare IPv6 (contains ':' but more than one of them, OR a '%' scope).
+		const colons = (host.match(/:/g) || []).length
+		if (colons > 1 || host.includes('%')) {
+			return { host, port: DEFAULT_PHYSICAL_PORT }
+		}
+
+		// Strip an optional :port suffix the user may have typed out of habit.
+		if (colons === 1) {
+			const i = host.indexOf(':')
+			if (/^\d+$/.test(host.slice(i + 1))) host = host.slice(0, i).trim()
+		}
+
+		// IPv4 → pass through.
+		if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+			return { host, port: DEFAULT_PHYSICAL_PORT }
+		}
+
+		// mDNS path: drop trailing dots, ensure exactly one ".local" suffix.
+		host = host.replace(/\.+$/, '')
+		if (!/\.local$/i.test(host)) host += '.local'
+
+		if (host === '.local') return { host: null, port: null }
 		return { host, port: DEFAULT_PHYSICAL_PORT }
 	}
 
@@ -4380,22 +4404,20 @@ class ModuleInstance extends InstanceBase {
 				return
 			}
 			if (!host) {
-				this.updateStatus(InstanceStatus.BadConfig, 'Manual mode — enter IP / hostname')
+				this.updateStatus(
+					InstanceStatus.BadConfig,
+					'Manual mode — enter IPv4, IPv6, or mDNS address',
+				)
 				return
 			}
 			this.updateStatus(InstanceStatus.Connecting, `Connecting to ${host}:${port}…`)
 			return
 		}
 
-		const dev = sel ? this._mdnsDevices.find((d) => d.key === sel) : null
-
-		// 1. We're already subscribed to the selected Galaxy — that wins.
-		if (this.subSock && dev) {
-			this.updateStatus(InstanceStatus.Ok, `${dev.name || dev.model} @ ${dev.host}:${dev.port}`)
-			return
-		}
-
-		// 2. Initial discovery still in progress (no subscription yet).
+		// 1. Initial discovery still in progress — spinner stays on, even
+		//    if the user's selected Galaxy is already subscribed. Other
+		//    Galaxys may still be arriving and we want the UX to reflect
+		//    "the list isn't done yet" rather than jumping to green early.
 		if (!this._discoveryStable) {
 			this.updateStatus(
 				InstanceStatus.Connecting,
@@ -4404,7 +4426,10 @@ class ModuleInstance extends InstanceBase {
 			return
 		}
 
-		// 3. Discovery done but user hasn't picked.
+		// Past this point discovery has settled.
+		const dev = sel ? this._mdnsDevices.find((d) => d.key === sel) : null
+
+		// 2. Discovery done but user hasn't picked.
 		if (!sel) {
 			this.updateStatus(
 				InstanceStatus.Disconnected,
@@ -4413,13 +4438,19 @@ class ModuleInstance extends InstanceBase {
 			return
 		}
 
-		// 4. Picked but currently offline.
+		// 3. Picked but currently offline.
 		if (!dev) {
 			this.updateStatus(InstanceStatus.Disconnected, 'Selected Galaxy is offline')
 			return
 		}
 
-		// 5. Picked, online, but no subSock yet (TCP handshake in flight).
+		// 4. Picked + subscribed → green.
+		if (this.subSock) {
+			this.updateStatus(InstanceStatus.Ok, `${dev.name || dev.model} @ ${dev.host}:${dev.port}`)
+			return
+		}
+
+		// 5. Picked, online, but TCP handshake still in flight.
 		this.updateStatus(InstanceStatus.Connecting, `Connecting to ${dev.name || dev.model}…`)
 	}
 
