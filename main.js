@@ -4211,8 +4211,11 @@ class ModuleInstance extends InstanceBase {
 		const key  = v.entity_id   // 'virtual:127.0.0.1:50503' (synthesized)
 		const host = v.host
 		const port = v.port
-		const flavour = port === DEFAULT_PHYSICAL_PORT ? 'standalone' : 'virtual'
-		const model = v.model_string ? `${v.model_string} (${flavour})` : modelNameFromEntityModelId(v.entity_model_id)
+		// Always use the entity-model-id mapping so virtual entries read
+		// the same way as real ones ("Galaxy 408" / "Galaxy 816" / etc.)
+		// rather than the raw OSC model_string ("GX-408", "GX-816AES").
+		// The "(virtual)" suffix distinguishes them in the dropdown.
+		const model = `${modelNameFromEntityModelId(v.entity_model_id)} (virtual)`
 		const prev = this._mdnsDevices.find((d) => d.key === key)
 		const entry = {
 			key, host, port,
