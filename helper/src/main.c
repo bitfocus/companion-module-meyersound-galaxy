@@ -383,6 +383,42 @@ static int send_discover_on_all(uint64_t target_entity_id) {
 
 /* ---- interface enumeration ----------------------------------------- */
 
+/* ---- platform preflight (run before opening any interface) --------- */
+
+#if defined(__APPLE__)
+/* Try opening /dev/bpf0 to see whether the user has BPF access at all.
+ * EACCES here means they're not in the access_bpf group — emit a
+ * dedicated message instead of EACCES repeated per interface. */
+static int preflight(void) {
+    int fd = open("/dev/bpf0", O_RDWR);
+    if (fd >= 0) { close(fd); return 0; }
+    if (errno == EBUSY) return 0;  /* in use but we have permission */
+    if (errno == EACCES) {
+        emit_error("permission denied on /dev/bpf0 — add this user to "
+                   "the access_bpf group: "
+                   "sudo dseditgroup -o edit -a $USER -t user access_bpf "
+                   "(then log out and back in)");
+        return -1;
+    }
+    /* Any other errno: let the per-iface loop surface it. */
+    return 0;
+}
+#elif defined(__linux__)
+static int preflight(void) {
+    int s = socket(AF_PACKET, SOCK_RAW, htons(ETHERTYPE_AVTP));
+    if (s >= 0) { close(s); return 0; }
+    if (errno == EPERM || errno == EACCES) {
+        emit_error("permission denied opening AF_PACKET socket — give "
+                   "the helper binary CAP_NET_RAW: "
+                   "sudo setcap cap_net_raw=eip <path-to-galaxy-discovery-helper>");
+        return -1;
+    }
+    return 0;
+}
+#else
+static int preflight(void) { return 0; }
+#endif
+
 #if !defined(_WIN32)
 static int is_candidate_iface(const char *name) {
     if (strcmp(name, "lo0") == 0 || strcmp(name, "lo") == 0) return 0;
@@ -733,6 +769,8 @@ int main(int argc, char **argv) {
     _setmode(_fileno(stdin),  _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
+
+    if (preflight() < 0) return 1;
 
     if (enumerate_and_open() == 0) {
         emit_error("no usable network interface — nothing to listen on");

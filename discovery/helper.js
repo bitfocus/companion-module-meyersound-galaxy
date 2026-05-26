@@ -64,6 +64,7 @@ class DiscoveryHelper extends EventEmitter {
 		}
 		this.log('info', `spawning ${bin}`)
 		this.expectedExit = false
+		this.gotReady = false
 
 		try {
 			this.proc = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -82,6 +83,15 @@ class DiscoveryHelper extends EventEmitter {
 
 		this.proc.on('exit', (code, signal) => {
 			this.log('info', `helper exited (code=${code} signal=${signal})`)
+			// If the process died before it could even emit a 'ready'
+			// event, the most common cause is a platform prerequisite
+			// (BPF group / CAP_NET_RAW / Npcap install). The Windows
+			// loader uses exit code 0xC0000135 (-1073741515 as int32)
+			// to signal "required DLL not found", which is what happens
+			// when wpcap.dll is missing because Npcap was never installed.
+			if (!this.gotReady && !this.expectedExit) {
+				this._logPrerequisiteHint(code)
+			}
 			this.proc = null
 			this.rl = null
 			if (!this.expectedExit) {
@@ -94,6 +104,39 @@ class DiscoveryHelper extends EventEmitter {
 
 		if (!this.expireTimer) {
 			this.expireTimer = setInterval(() => this._expireDevices(), 5000)
+		}
+	}
+
+	_logPrerequisiteHint(exitCode) {
+		if (process.platform === 'win32') {
+			// 0xC0000135 = STATUS_DLL_NOT_FOUND. Node surfaces it as a
+			// signed int32, which is -1073741515.
+			if (exitCode === -1073741515 || exitCode === 0xC0000135) {
+				this.log('error',
+					'Discovery helper failed to start: wpcap.dll not found. ' +
+					'Install Npcap from https://npcap.com — pick the default ' +
+					'install options and re-enable this connection.')
+				return
+			}
+			this.log('warn',
+				'Discovery helper exited before reporting ready. If you have ' +
+				'not installed Npcap (https://npcap.com), do that first.')
+			return
+		}
+		if (process.platform === 'darwin') {
+			this.log('warn',
+				'Discovery helper exited before reporting ready. If the ' +
+				'preceding error mentioned BPF permission denied, add this ' +
+				'user to the access_bpf group: ' +
+				'sudo dseditgroup -o edit -a $USER -t user access_bpf, ' +
+				'then log out and back in.')
+			return
+		}
+		if (process.platform === 'linux') {
+			this.log('warn',
+				'Discovery helper exited before reporting ready. If the ' +
+				'preceding error mentioned EPERM, grant the helper binary ' +
+				'CAP_NET_RAW: sudo setcap cap_net_raw=eip <path-to-helper>.')
 		}
 	}
 
@@ -125,6 +168,7 @@ class DiscoveryHelper extends EventEmitter {
 		}
 		switch (msg.event) {
 			case 'ready':
+				this.gotReady = true
 				this.interfaces = Array.isArray(msg.interfaces) ? msg.interfaces : []
 				this.emit('ready', msg)
 				return
