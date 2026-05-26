@@ -1,11 +1,10 @@
 /*
- * discovery/virtual-scan.js — discover virtual / development Galaxy
- * instances running on this host via a TCP port-probe on 127.0.0.1.
+ * discovery/virtual-scan.js — discover virtual Galaxy instances running
+ * on this host via a TCP port-probe on 127.0.0.1.
  *
- * Virtuals spawned by Meyer's development tooling use the conventional
- * virtual port range (50503, 50403, 50303, …, 48603). A standalone test
- * instance launched from a terminal binds to the real-Galaxy port 25003
- * on the local host. We probe both ranges.
+ * Virtuals use the conventional virtual port range (50503, 50403, 50303,
+ * …, 48603). A virtual that binds to the real-Galaxy port 25003 on the
+ * local host is also picked up. We probe both ranges.
  */
 
 const net = require('node:net')

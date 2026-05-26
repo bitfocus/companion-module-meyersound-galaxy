@@ -44,8 +44,8 @@ function macToIPv6LinkLocal(mac, scope) {
 //                  4 = Galaxy 816
 //                  5 = Galaxy 816-AES
 //                  8 = Galaxy Bluehorn
-//   R (revision):  'a' on real hardware, '0' on virtual / development
-//                  instances — ignored here for naming.
+//   R (revision):  'a' on real hardware, '0' on virtual instances —
+//                  ignored here for naming.
 const MODEL_ID_PATTERN = /^001cabb80400([3458])0[0-9a-f]{2}$/
 const MODEL_BY_SELECTOR = {
 	'3': 'Galaxy 408',
