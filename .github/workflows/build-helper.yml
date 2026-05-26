@@ -1,0 +1,130 @@
+name: Build helper binaries
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, feature/atdecc-discovery-integration]
+    paths:
+      - 'helper/src/**'
+      - 'helper/Makefile'
+      - '.github/workflows/build-helper.yml'
+  pull_request:
+    paths:
+      - 'helper/src/**'
+      - 'helper/Makefile'
+      - '.github/workflows/build-helper.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  darwin-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C helper native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-darwin-arm64
+          path: helper/prebuilt/galaxy-discovery-helper-darwin-arm64
+
+  darwin-x64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C helper native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-darwin-x64
+          path: helper/prebuilt/galaxy-discovery-helper-darwin-x64
+
+  linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C helper native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-linux-x64
+          path: helper/prebuilt/galaxy-discovery-helper-linux-x64
+
+  linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install aarch64 cross-toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - run: make -C helper linux-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-linux-arm64
+          path: helper/prebuilt/galaxy-discovery-helper-linux-arm64
+
+  win-x64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+            unzip
+            curl
+      - name: Download Npcap SDK
+        run: |
+          curl -L -o npcap-sdk.zip https://npcap.com/dist/npcap-sdk-1.13.zip
+          mkdir -p npcap-sdk
+          unzip -q npcap-sdk.zip -d npcap-sdk
+      - name: Build (mingw + Npcap SDK)
+        run: |
+          export NPCAP_SDK="$(pwd)/npcap-sdk"
+          make -C helper win-x64 MINGW_CC=gcc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-win-x64
+          path: helper/prebuilt/galaxy-discovery-helper-win-x64.exe
+
+  commit-binaries:
+    # Only commits when manually dispatched — push/PR runs just verify the build.
+    needs: [darwin-arm64, darwin-x64, linux-x64, linux-arm64, win-x64]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Stage binaries
+        run: |
+          mkdir -p helper/prebuilt
+          cp artifacts/helper-darwin-arm64/* helper/prebuilt/
+          cp artifacts/helper-darwin-x64/* helper/prebuilt/
+          cp artifacts/helper-linux-x64/* helper/prebuilt/
+          cp artifacts/helper-linux-arm64/* helper/prebuilt/
+          cp artifacts/helper-win-x64/* helper/prebuilt/
+          chmod +x helper/prebuilt/galaxy-discovery-helper-darwin-arm64 \
+                   helper/prebuilt/galaxy-discovery-helper-darwin-x64 \
+                   helper/prebuilt/galaxy-discovery-helper-linux-x64 \
+                   helper/prebuilt/galaxy-discovery-helper-linux-arm64 || true
+          ls -la helper/prebuilt/
+      - name: Commit and push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add helper/prebuilt/
+          if git diff --staged --quiet; then
+            echo "No binary changes to commit"
+          else
+            git commit -m "build: refresh prebuilt helper binaries [skip ci]"
+            git push
+          fi
