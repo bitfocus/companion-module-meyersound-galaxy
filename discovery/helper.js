@@ -11,7 +11,20 @@ const readline = require('node:readline')
 const { EventEmitter } = require('node:events')
 const fs = require('node:fs')
 
-const PREBUILT_DIR = path.join(__dirname, '..', 'helper', 'prebuilt')
+// Resolved relative to the running main.js so it works in both modes:
+//   - dev mode    → <module>/helper/prebuilt
+//   - companion-module-build pkg → <pkg>/prebuilt (extraFiles flattens it)
+function resolvePrebuiltDir() {
+	const moduleDir = path.dirname(process.argv[1] || '')
+	for (const c of [
+		path.join(moduleDir, 'helper', 'prebuilt'),
+		path.join(moduleDir, 'prebuilt'),
+	]) {
+		if (fs.existsSync(c)) return c
+	}
+	return path.join(moduleDir, 'helper', 'prebuilt')
+}
+const PREBUILT_DIR = resolvePrebuiltDir()
 
 function helperBinaryName() {
 	const target =
