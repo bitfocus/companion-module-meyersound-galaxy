@@ -43,6 +43,7 @@
 #  include <ws2tcpip.h>
 #  include <windows.h>
 #  include <iphlpapi.h>
+#  include <fcntl.h>
 #  include <io.h>
 #  include <pcap.h>
 #  ifdef _MSC_VER
@@ -70,7 +71,9 @@
 #  include <net/bpf.h>
 #  include <net/if_dl.h>
 #elif defined(__linux__)
-#  include <linux/if_packet.h>
+/* <netpacket/packet.h> is the userspace wrapper around the kernel
+ * <linux/if_packet.h> structs (sockaddr_ll, packet_mreq, ...). Pulling
+ * both at once redefines them on glibc — use only the userspace header. */
 #  include <netpacket/packet.h>
 #endif
 
