@@ -1,10 +1,11 @@
 /*
- * discovery/virtual-scan.js — discover virtual / standalone g2d instances
- * running on this Mac via a TCP port-probe on 127.0.0.1.
+ * discovery/virtual-scan.js — discover virtual / development Galaxy
+ * instances running on this host via a TCP port-probe on 127.0.0.1.
  *
- * Compass-spawned virtuals use the conventional virtual port range (50503,
- * 50403, 50303, …, 48603). A standalone `g2d g2d` launched from a terminal
- * binds to the real-Galaxy port 25003 on the local host. We probe both.
+ * Virtuals spawned by Meyer's development tooling use the conventional
+ * virtual port range (50503, 50403, 50303, …, 48603). A standalone test
+ * instance launched from a terminal binds to the real-Galaxy port 25003
+ * on the local host. We probe both ranges.
  */
 
 const net = require('node:net')

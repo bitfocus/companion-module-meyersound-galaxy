@@ -23,30 +23,48 @@
  *      "valid_time_s":20}
  *     {"event":"error","msg":"..."}
  *
- * macOS  uses BPF (/dev/bpf*); needs group access_bpf (admin default).
- * Linux  uses AF_PACKET; needs CAP_NET_RAW (`setcap cap_net_raw=eip`).
- * Windows not yet supported in this single-file build.
+ * macOS    uses BPF (/dev/bpf*); needs group access_bpf (admin default).
+ * Linux    uses AF_PACKET; needs CAP_NET_RAW (`setcap cap_net_raw=eip`).
+ * Windows  uses libpcap (Npcap); needs Npcap installed system-wide.
  */
 
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdarg.h>
-#include <fcntl.h>
 #include <time.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <sys/select.h>
-#include <net/if.h>
-#include <net/ethernet.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <ifaddrs.h>
+
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+#  include <windows.h>
+#  include <iphlpapi.h>
+#  include <io.h>
+#  include <pcap.h>
+#  ifdef _MSC_VER
+#    pragma comment(lib, "ws2_32.lib")
+#    pragma comment(lib, "iphlpapi.lib")
+#    pragma comment(lib, "wpcap.lib")
+#  endif
+#  define MAX_IFACE_NAME 260
+#else
+#  include <unistd.h>
+#  include <fcntl.h>
+#  include <sys/types.h>
+#  include <sys/socket.h>
+#  include <sys/ioctl.h>
+#  include <sys/select.h>
+#  include <net/if.h>
+#  include <net/ethernet.h>
+#  include <netinet/in.h>
+#  include <arpa/inet.h>
+#  include <ifaddrs.h>
+#  define MAX_IFACE_NAME IFNAMSIZ
+#endif
 
 #if defined(__APPLE__)
 #  include <net/bpf.h>
@@ -71,14 +89,16 @@ static const uint8_t ADP_MULTICAST_MAC[6] = { 0x91, 0xe0, 0xf0, 0x01, 0x00, 0x00
 #define MAX_IFACES 16
 
 typedef struct {
-    char     name[IFNAMSIZ];
-    int      fd;
+    char     name[MAX_IFACE_NAME];
+    int      fd;            /* POSIX only; -1 on Windows                    */
     uint8_t  src_mac[6];
     int      dead;          /* set once read() reports the iface has gone   */
 #if defined(__APPLE__)
-    u_int    bpf_bufsize;
+    unsigned bpf_bufsize;
 #elif defined(__linux__)
     int      ifindex;
+#elif defined(_WIN32)
+    pcap_t  *pcap;
 #endif
 } iface_t;
 
@@ -197,9 +217,46 @@ static int get_iface_mac(const char *ifname, uint8_t out[6]) {
     memcpy(out, ifr.ifr_hwaddr.sa_data, 6);
     return 0;
 }
+#elif defined(_WIN32)
+/* Windows pcap names look like "\Device\NPF_{GUID}" while iphlpapi's
+ * AdapterName is the bare "{GUID}". We extract the GUID portion of the
+ * pcap name and match it against GetAdaptersAddresses output. */
+static int get_iface_mac(const char *pcap_name, uint8_t out[6]) {
+    const char *brace = strchr(pcap_name, '{');
+    if (!brace) return -1;
+
+    ULONG sz = 16 * 1024;
+    IP_ADAPTER_ADDRESSES *addrs = (IP_ADAPTER_ADDRESSES *)malloc(sz);
+    if (!addrs) return -1;
+
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                  GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_SKIP_FRIENDLY_NAME;
+    DWORD rc = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, addrs, &sz);
+    if (rc == ERROR_BUFFER_OVERFLOW) {
+        free(addrs);
+        addrs = (IP_ADAPTER_ADDRESSES *)malloc(sz);
+        if (!addrs) return -1;
+        rc = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, addrs, &sz);
+    }
+    if (rc != NO_ERROR) { free(addrs); return -1; }
+
+    int found = -1;
+    for (IP_ADAPTER_ADDRESSES *p = addrs; p; p = p->Next) {
+        if (p->PhysicalAddressLength != 6) continue;
+        if (!p->AdapterName) continue;
+        /* AdapterName is "{GUID}"; brace points at "{GUID}" inside pcap_name. */
+        if (strstr(brace, p->AdapterName) != NULL) {
+            memcpy(out, p->PhysicalAddress, 6);
+            found = 0;
+            break;
+        }
+    }
+    free(addrs);
+    return found;
+}
 #endif
 
-/* ---- open BPF (macOS) / AF_PACKET (Linux) per iface ---------------- */
+/* ---- open BPF (macOS) / AF_PACKET (Linux) / pcap (Windows) --------- */
 
 #if defined(__APPLE__)
 static int open_iface(iface_t *iface) {
@@ -260,6 +317,35 @@ static int open_iface(iface_t *iface) {
 }
 #endif
 
+#if defined(_WIN32)
+static int open_iface(iface_t *iface) {
+    char errbuf[PCAP_ERRBUF_SIZE];
+    /* read_timeout 50ms — pcap_next_ex will return 0 within this window
+     * if no frames arrived, letting our main poll loop stay responsive. */
+    pcap_t *p = pcap_open_live(iface->name, 65535, 0 /* not promisc */, 50, errbuf);
+    if (!p) { emit_error("pcap_open_live(%s) failed: %s", iface->name, errbuf); return -1; }
+
+    /* Kernel-side filter so we only wake up for ATDECC frames. */
+    struct bpf_program fp;
+    if (pcap_compile(p, &fp, "ether proto 0x22F0", 1, PCAP_NETMASK_UNKNOWN) == 0) {
+        pcap_setfilter(p, &fp);
+        pcap_freecode(&fp);
+    }
+
+    /* Non-blocking mode: pcap_next_ex returns rc=0 immediately when the
+     * receive buffer is empty, instead of waiting for read_timeout. */
+    if (pcap_setnonblock(p, 1, errbuf) < 0) {
+        emit_error("pcap_setnonblock(%s) failed: %s", iface->name, errbuf);
+        pcap_close(p);
+        return -1;
+    }
+
+    iface->pcap = p;
+    iface->fd = -1;
+    return 0;
+}
+#endif
+
 static int send_frame(iface_t *iface, const uint8_t *frame, size_t len) {
 #if defined(__APPLE__)
     return write(iface->fd, frame, len) == (ssize_t)len ? 0 : -1;
@@ -272,6 +358,8 @@ static int send_frame(iface_t *iface, const uint8_t *frame, size_t len) {
     memcpy(sll.sll_addr, frame, 6);
     return sendto(iface->fd, frame, len, 0,
                   (struct sockaddr *)&sll, sizeof(sll)) == (ssize_t)len ? 0 : -1;
+#elif defined(_WIN32)
+    return pcap_sendpacket(iface->pcap, frame, (int)len);  /* 0 = ok */
 #endif
 }
 
@@ -279,7 +367,11 @@ static int send_discover_on_all(uint64_t target_entity_id) {
     int sent = 0;
     uint8_t frame[ADP_FRAME_LEN];
     for (int i = 0; i < N_IFACES; i++) {
+#if defined(_WIN32)
+        if (IFACES[i].dead || !IFACES[i].pcap) continue;
+#else
         if (IFACES[i].dead || IFACES[i].fd < 0) continue;
+#endif
         build_entity_discover_frame(frame, IFACES[i].src_mac, target_entity_id);
         if (send_frame(&IFACES[i], frame, ADP_FRAME_LEN) == 0) sent++;
     }
@@ -288,6 +380,7 @@ static int send_discover_on_all(uint64_t target_entity_id) {
 
 /* ---- interface enumeration ----------------------------------------- */
 
+#if !defined(_WIN32)
 static int is_candidate_iface(const char *name) {
     if (strcmp(name, "lo0") == 0 || strcmp(name, "lo") == 0) return 0;
     static const char *blocked[] = {
@@ -309,7 +402,7 @@ static int enumerate_and_open(void) {
     struct ifaddrs *ifap, *p;
     if (getifaddrs(&ifap) < 0) { emit_error("getifaddrs: %s", strerror(errno)); return 0; }
 
-    char seen[MAX_IFACES][IFNAMSIZ]; int n_seen = 0;
+    char seen[MAX_IFACES][MAX_IFACE_NAME]; int n_seen = 0;
     for (p = ifap; p && n_seen < MAX_IFACES; p = p->ifa_next) {
         const char *name = p->ifa_name;
         if (!name) continue;
@@ -327,7 +420,7 @@ static int enumerate_and_open(void) {
 
         iface_t *iface = &IFACES[N_IFACES];
         memset(iface, 0, sizeof(*iface));
-        strncpy(iface->name, name, IFNAMSIZ - 1);
+        strncpy(iface->name, name, MAX_IFACE_NAME - 1);
         memcpy(iface->src_mac, mac, 6);
         if (open_iface(iface) < 0) {
             char macs[18]; mac_to_str(mac, macs);
@@ -335,12 +428,45 @@ static int enumerate_and_open(void) {
                        name, macs, strerror(errno));
             continue;
         }
-        strncpy(seen[n_seen++], name, IFNAMSIZ);
+        strncpy(seen[n_seen++], name, MAX_IFACE_NAME);
         N_IFACES++;
     }
     freeifaddrs(ifap);
     return N_IFACES;
 }
+#endif /* !_WIN32 */
+
+#if defined(_WIN32)
+static int enumerate_and_open(void) {
+    pcap_if_t *alldevs = NULL;
+    char errbuf[PCAP_ERRBUF_SIZE];
+    if (pcap_findalldevs(&alldevs, errbuf) != 0 || !alldevs) {
+        emit_error("pcap_findalldevs: %s (is Npcap installed?)",
+                   errbuf[0] ? errbuf : "no devices");
+        return 0;
+    }
+
+    for (pcap_if_t *d = alldevs; d && N_IFACES < MAX_IFACES; d = d->next) {
+        if (!d->name) continue;
+        if (d->flags & PCAP_IF_LOOPBACK) continue;
+
+        uint8_t mac[6];
+        if (get_iface_mac(d->name, mac) < 0) continue;
+        int zero = 1; for (int i = 0; i < 6; i++) if (mac[i]) { zero = 0; break; }
+        if (zero) continue;
+
+        iface_t *iface = &IFACES[N_IFACES];
+        memset(iface, 0, sizeof(*iface));
+        strncpy(iface->name, d->name, MAX_IFACE_NAME - 1);
+        memcpy(iface->src_mac, mac, 6);
+        iface->fd = -1;
+        if (open_iface(iface) < 0) continue;
+        N_IFACES++;
+    }
+    pcap_freealldevs(alldevs);
+    return N_IFACES;
+}
+#endif /* _WIN32 */
 
 /* ---- stdin commands ------------------------------------------------ */
 
@@ -382,9 +508,8 @@ static void handle_stdin_command(char *line) {
 
 /* Discovery cadence — applied AFTER the initial discover at startup.
  *
- * On a busy LAN with many AVB / ATDECC controllers (Compass, Nebra,
- * other Companion instances) any single multicast ENTITY_DISCOVER can be
- * dropped by the switch. We compensate by:
+ * On a busy LAN with many ATDECC controllers any single multicast
+ * ENTITY_DISCOVER can be dropped by the switch. We compensate by:
  *
  *   1. Bursting BURST_COUNT discovers at startup, BURST_INTERVAL_MS apart.
  *   2. Re-sending one discover every REFRESH_INTERVAL_MS in steady state.
@@ -397,48 +522,124 @@ static void handle_stdin_command(char *line) {
                                             quickly without needing a restart  */
 
 static uint64_t now_ms(void) {
+#if defined(_WIN32)
+    return (uint64_t)GetTickCount64();
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000);
+#endif
 }
 
-int main(int argc, char **argv) {
-    int listen_only = 0;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--listen-only") == 0) listen_only = 1;
-        else { fprintf(stderr, "Usage: %s [--listen-only]\n", argv[0]); return 2; }
-    }
-    setvbuf(stdout, NULL, _IOLBF, 0);
+/* ---- stdin line buffering (shared) --------------------------------- */
 
-    if (enumerate_and_open() == 0) {
-        emit_error("no usable network interface — nothing to listen on");
-        return 1;
-    }
+static char  linebuf[256];
+static size_t line_used = 0;
 
-    fprintf(stdout, "{\"event\":\"ready\",\"interfaces\":[");
-    for (int i = 0; i < N_IFACES; i++) {
-        char macs[18]; mac_to_str(IFACES[i].src_mac, macs);
-        fprintf(stdout, "%s{\"name\":\"%s\",\"src_mac\":\"%s\"}",
-                i ? "," : "", IFACES[i].name, macs);
+static void feed_stdin_bytes(const char *tmp, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (line_used < sizeof(linebuf) - 1) linebuf[line_used++] = tmp[i];
+        if (tmp[i] == '\n') {
+            linebuf[line_used] = 0;
+            handle_stdin_command(linebuf);
+            line_used = 0;
+        }
     }
-    fprintf(stdout, "],\"pid\":%d}\n", (int)getpid()); fflush(stdout);
+}
 
-    /* Schedule the first send for right now (the loop below will fire it). */
+#if defined(_WIN32)
+/* ---- Windows main loop (pcap + polled stdin) ----------------------- */
+
+static int win_drain_iface(iface_t *iface) {
+    struct pcap_pkthdr *hdr;
+    const u_char *pkt;
+    for (;;) {
+        int rc = pcap_next_ex(iface->pcap, &hdr, &pkt);
+        if (rc == 1) {
+            handle_frame(iface->name, pkt, (size_t)hdr->caplen);
+        } else if (rc == 0) {
+            return 0;          /* non-blocking timeout — no more packets */
+        } else {
+            emit_error("pcap_next_ex(%s): %s — removing from listen set",
+                       iface->name, pcap_geterr(iface->pcap));
+            pcap_close(iface->pcap);
+            iface->pcap = NULL;
+            iface->dead = 1;
+            return -1;
+        }
+    }
+}
+
+static int run_main_loop_win(int listen_only) {
+    int discovers_sent = 0;
+    uint64_t next_discover_at = listen_only ? UINT64_MAX : now_ms();
+
+    HANDLE hstdin = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD  stdin_type = GetFileType(hstdin);
+    char   tmp[256];
+
+    for (;;) {
+        uint64_t now = now_ms();
+        if (!listen_only && now >= next_discover_at) {
+            int sent = send_discover_on_all(0);
+            discovers_sent++;
+            emit_event("sent_discover",
+                       "\"entity_id\":\"0000000000000000\",\"ifaces\":%d,\"n\":%d",
+                       sent, discovers_sent);
+            next_discover_at = now + (discovers_sent < BURST_COUNT
+                                      ? BURST_INTERVAL_MS
+                                      : REFRESH_INTERVAL_MS);
+        }
+
+        for (int i = 0; i < N_IFACES; i++) {
+            if (IFACES[i].dead || !IFACES[i].pcap) continue;
+            win_drain_iface(&IFACES[i]);
+        }
+
+        /* Companion spawns us with stdin as a pipe — handle that case. */
+        if (stdin_type == FILE_TYPE_PIPE) {
+            DWORD avail = 0;
+            if (!PeekNamedPipe(hstdin, NULL, 0, NULL, &avail, NULL)) {
+                if (GetLastError() == ERROR_BROKEN_PIPE) {
+                    emit_event("stdin_closed", "");
+                    return 0;
+                }
+            } else if (avail > 0) {
+                DWORD n = 0;
+                if (ReadFile(hstdin, tmp, (DWORD)sizeof(tmp), &n, NULL) && n > 0) {
+                    feed_stdin_bytes(tmp, (size_t)n);
+                } else if (GetLastError() == ERROR_BROKEN_PIPE) {
+                    emit_event("stdin_closed", "");
+                    return 0;
+                }
+            }
+        }
+
+        /* Sleep just enough that we don't burn CPU while still being
+         * responsive to packets and stdin commands. */
+        uint64_t wait_ms = (next_discover_at > now) ? (next_discover_at - now) : 0;
+        if (wait_ms > 20) wait_ms = 20;
+        Sleep((DWORD)wait_ms);
+    }
+}
+#endif /* _WIN32 */
+
+#if !defined(_WIN32)
+/* ---- POSIX main loop (select() over BPF/AF_PACKET fds) ------------- */
+
+static int run_main_loop_posix(int listen_only) {
     int discovers_sent = 0;
     uint64_t next_discover_at = listen_only ? UINT64_MAX : now_ms();
 
     size_t pktbuf_cap = 64 * 1024;
-#if defined(__APPLE__)
+#  if defined(__APPLE__)
     for (int i = 0; i < N_IFACES; i++)
         if (IFACES[i].bpf_bufsize > pktbuf_cap) pktbuf_cap = IFACES[i].bpf_bufsize;
-#endif
+#  endif
     uint8_t *pktbuf = (uint8_t *)malloc(pktbuf_cap);
     if (!pktbuf) { emit_error("malloc(%zu) failed", pktbuf_cap); return 1; }
 
-    char linebuf[256]; size_t line_used = 0;
-
     for (;;) {
-        /* Time-driven discover: when due, send and schedule the next one. */
         uint64_t now = now_ms();
         if (!listen_only && now >= next_discover_at) {
             int sent = send_discover_on_all(0);
@@ -460,9 +661,8 @@ int main(int argc, char **argv) {
         }
         FD_SET(STDIN_FILENO, &rfds);
 
-        /* select() timeout: never block past the next scheduled discover. */
         uint64_t wait_ms = (next_discover_at > now) ? (next_discover_at - now) : 0;
-        if (wait_ms > 30000) wait_ms = 30000;        /* cap at 30s for sanity */
+        if (wait_ms > 30000) wait_ms = 30000;
         struct timeval tv = {
             .tv_sec  = (time_t)(wait_ms / 1000),
             .tv_usec = (suseconds_t)((wait_ms % 1000) * 1000),
@@ -474,23 +674,22 @@ int main(int argc, char **argv) {
             emit_error("select: %s", strerror(errno));
             break;
         }
-        if (rc == 0) continue;          /* timeout — loop back, may send discover */
+        if (rc == 0) continue;
 
         for (int i = 0; i < N_IFACES; i++) {
             if (IFACES[i].dead || IFACES[i].fd < 0) continue;
             if (!FD_ISSET(IFACES[i].fd, &rfds)) continue;
             ssize_t n = read(IFACES[i].fd, pktbuf, pktbuf_cap);
             if (n > 0) {
-#if defined(__APPLE__)
+#  if defined(__APPLE__)
                 process_bpf_buffer(IFACES[i].name, pktbuf, (size_t)n);
-#elif defined(__linux__)
+#  elif defined(__linux__)
                 handle_frame(IFACES[i].name, pktbuf, (size_t)n);
-#endif
+#  endif
             } else if (n < 0 && errno != EINTR && errno != EAGAIN) {
                 /* ENXIO / ENODEV / EIO / EBADF all mean the interface or
-                 * BPF descriptor is gone (Thunderbolt unplug, VM stopped,
-                 * Wi-Fi disabled). Close + flag so we don't spin forever
-                 * emitting the same error on every select() iteration. */
+                 * BPF descriptor is gone (USB unplug, VM stopped, Wi-Fi
+                 * disabled). Close + flag so we don't spin forever. */
                 emit_error("read(%s): %s — removing from listen set",
                            IFACES[i].name, strerror(errno));
                 close(IFACES[i].fd);
@@ -503,20 +702,61 @@ int main(int argc, char **argv) {
             char tmp[256];
             ssize_t n = read(STDIN_FILENO, tmp, sizeof(tmp));
             if (n <= 0) { emit_event("stdin_closed", ""); break; }
-            for (ssize_t i = 0; i < n; i++) {
-                if (line_used < sizeof(linebuf) - 1) linebuf[line_used++] = tmp[i];
-                if (tmp[i] == '\n') {
-                    linebuf[line_used] = 0;
-                    handle_stdin_command(linebuf);
-                    line_used = 0;
-                }
-            }
+            feed_stdin_bytes(tmp, (size_t)n);
         }
     }
 
     free(pktbuf);
-    for (int i = 0; i < N_IFACES; i++) {
-        if (IFACES[i].fd >= 0) close(IFACES[i].fd);
-    }
     return 0;
+}
+#endif /* !_WIN32 */
+
+int main(int argc, char **argv) {
+    int listen_only = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--listen-only") == 0) listen_only = 1;
+        else { fprintf(stderr, "Usage: %s [--listen-only]\n", argv[0]); return 2; }
+    }
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
+#if defined(_WIN32)
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        emit_error("WSAStartup failed");
+        return 1;
+    }
+    /* Force stdin/stdout into binary mode so newline translation doesn't
+     * desync our NDJSON or chunked stdin reads. */
+    _setmode(_fileno(stdin),  _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+
+    if (enumerate_and_open() == 0) {
+        emit_error("no usable network interface — nothing to listen on");
+        return 1;
+    }
+
+    fprintf(stdout, "{\"event\":\"ready\",\"interfaces\":[");
+    for (int i = 0; i < N_IFACES; i++) {
+        char macs[18]; mac_to_str(IFACES[i].src_mac, macs);
+        fprintf(stdout, "%s{\"name\":\"%s\",\"src_mac\":\"%s\"}",
+                i ? "," : "", IFACES[i].name, macs);
+    }
+#if defined(_WIN32)
+    fprintf(stdout, "],\"pid\":%lu}\n", (unsigned long)GetCurrentProcessId());
+#else
+    fprintf(stdout, "],\"pid\":%d}\n", (int)getpid());
+#endif
+    fflush(stdout);
+
+#if defined(_WIN32)
+    int rc = run_main_loop_win(listen_only);
+    for (int i = 0; i < N_IFACES; i++) if (IFACES[i].pcap) pcap_close(IFACES[i].pcap);
+    WSACleanup();
+    return rc;
+#else
+    int rc = run_main_loop_posix(listen_only);
+    for (int i = 0; i < N_IFACES; i++) if (IFACES[i].fd >= 0) close(IFACES[i].fd);
+    return rc;
+#endif
 }

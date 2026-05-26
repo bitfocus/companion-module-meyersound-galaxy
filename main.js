@@ -4111,7 +4111,7 @@ class ModuleInstance extends InstanceBase {
 
 	// ======================================================================
 	// Discovery: native ATDECC helper for real Galaxys on the LAN + a
-	// localhost TCP scan for virtual / standalone g2d instances. Both feed
+	// localhost TCP scan for virtual / development instances. Both feed
 	// into this._mdnsDevices, the shape the rest of this module already uses.
 	// ======================================================================
 
@@ -4155,7 +4155,7 @@ class ModuleInstance extends InstanceBase {
 		this._discoveryHelper.on('device-removed', (dev) => this._onDeviceLost(dev.entity_id))
 		this._discoveryHelper.start()
 
-		// Local: TCP port-probe on 127.0.0.1 for virtual / standalone g2d.
+		// Local: TCP port-probe on 127.0.0.1 for virtual / development instances.
 		this._virtScan = new VirtualGalaxyScanner({ log: (l, m) => this.log(l, m) })
 		this._virtScan.on('virtual-added',   (v) => this._onVirtualDiscovered(v))
 		this._virtScan.on('virtual-updated', (v) => this._onVirtualDiscovered(v))
