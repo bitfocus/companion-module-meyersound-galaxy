@@ -26,19 +26,25 @@ const CACHE_PATH = path.join(os.tmpdir(), 'companion-module-meyersound-galaxy-di
 // other instance is running and we should not trust the snapshot.
 const MAX_AGE_MS = 60_000
 
-function readCache() {
+function readCache(log) {
 	try {
 		const json = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'))
 		if (typeof json.writtenAt !== 'number') return null
-		if (Date.now() - json.writtenAt > MAX_AGE_MS) return null
+		const ageMs = Date.now() - json.writtenAt
+		if (ageMs > MAX_AGE_MS) {
+			log?.('debug', `discovery cache stale (${Math.round(ageMs / 1000)}s old) — ignoring`)
+			return null
+		}
 		if (!Array.isArray(json.devices)) return null
+		log?.('info', `discovery cache hit — ${json.devices.length} device(s) restored from ${CACHE_PATH}`)
 		return json.devices
-	} catch (_) {
+	} catch (e) {
+		if (e?.code !== 'ENOENT') log?.('debug', `discovery cache read failed: ${e.message}`)
 		return null
 	}
 }
 
-function writeCache(devices) {
+function writeCache(devices, log) {
 	try {
 		const payload = JSON.stringify({
 			version: 1,
@@ -49,8 +55,8 @@ function writeCache(devices) {
 		const tmp = `${CACHE_PATH}.${process.pid}.tmp`
 		fs.writeFileSync(tmp, payload)
 		fs.renameSync(tmp, CACHE_PATH)
-	} catch (_) {
-		/* best-effort */
+	} catch (e) {
+		log?.('debug', `discovery cache write failed (${e.code || ''}): ${e.message}`)
 	}
 }
 

@@ -4174,7 +4174,7 @@ class ModuleInstance extends InstanceBase {
 		// the normal verification window above; ghosts get pruned when
 		// it stops. If no instance has written recently, readCache
 		// returns null and we fall back to a cold scan as before.
-		const cached = discoveryCache.readCache()
+		const cached = discoveryCache.readCache((lvl, msg) => this.log(lvl, msg))
 		if (cached && cached.length) {
 			this._mdnsDevices = cached.map((d) => ({ ...d }))
 			this._cacheHydratedKeys = new Set(cached.map((d) => d.key))
@@ -4310,7 +4310,7 @@ class ModuleInstance extends InstanceBase {
 		if (this._cacheWriteTimer) return
 		this._cacheWriteTimer = setTimeout(() => {
 			this._cacheWriteTimer = null
-			try { discoveryCache.writeCache(this._mdnsDevices) } catch {}
+			discoveryCache.writeCache(this._mdnsDevices, (lvl, msg) => this.log(lvl, msg))
 		}, 500)
 	}
 
