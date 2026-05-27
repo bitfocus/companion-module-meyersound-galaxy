@@ -43,7 +43,7 @@ NPCAP_SDK  ?=
 WIN_OUT    := prebuilt/galaxy-discovery-helper-win-x64.exe
 WIN_CFLAGS := -O2 -Wall -std=c11 -D_WIN32_WINNT=0x0601
 
-.PHONY: all clean native linux-arm64 win-x64
+.PHONY: all clean distclean native linux-arm64 win-x64
 
 all: native
 
@@ -75,5 +75,12 @@ $(WIN_OUT): $(SRC) Makefile
 		-lws2_32 -liphlpapi -o $@
 	@echo "built -> $@"
 
+# Only the current platform's native output. Other-platform binaries
+# in prebuilt/ come from the GitHub Actions workflow's commit — a casual
+# `make clean` from a dev machine should not delete them. Use distclean
+# when you really want to nuke every prebuilt.
 clean:
+	rm -f $(OUT)
+
+distclean:
 	rm -f prebuilt/galaxy-discovery-helper-*

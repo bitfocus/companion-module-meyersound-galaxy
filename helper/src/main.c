@@ -9,9 +9,8 @@
  * gPTP details are not surfaced.
  *
  *   stdin commands (newline-terminated):
- *     "discover\n"          -> send another ENTITY_DISCOVER on every iface
- *     "identify <hex-id>\n" -> targeted DISCOVER for one entity_id
- *     "quit\n"              -> exit cleanly
+ *     "discover\n" -> send another ENTITY_DISCOVER on every iface
+ *     "quit\n"     -> exit cleanly
  *
  *   stdout NDJSON:
  *     {"event":"ready", "interfaces":[{"name":"en15","src_mac":"a0:ce:..."}]}
@@ -89,7 +88,10 @@ static const uint8_t ADP_MULTICAST_MAC[6] = { 0x91, 0xe0, 0xf0, 0x01, 0x00, 0x00
 
 /* ---- one bound interface -------------------------------------------- */
 
-#define MAX_IFACES 16
+/* Headroom for hosts with lots of VLANs / VPN tunnels / bridges. If we
+ * still hit the cap, enumerate_and_open() emits a warning so the user
+ * knows interfaces past the limit were ignored. */
+#define MAX_IFACES 32
 
 typedef struct {
     char     name[MAX_IFACE_NAME];
@@ -420,6 +422,13 @@ static int preflight(void) { return 0; }
 #endif
 
 #if !defined(_WIN32)
+/* Skip interfaces that can't realistically carry ATDECC traffic. The
+ * blocked-prefix list below is macOS-centric (utun = VPN tunnels,
+ * awdl/llw = AirDrop, anpi = Apple Network Privacy, gif/stf = tunnels,
+ * vmenet = Parallels/UTM, ap = AirPlay). Linux has equivalents
+ * (docker0, veth*, br-*, wg*) that aren't filtered here — they fall
+ * through and bind successfully but simply see no ATDECC frames, which
+ * is harmless apart from a few extra file descriptors. */
 static int is_candidate_iface(const char *name) {
     if (strcmp(name, "lo0") == 0 || strcmp(name, "lo") == 0) return 0;
     static const char *blocked[] = {
@@ -442,7 +451,9 @@ static int enumerate_and_open(void) {
     if (getifaddrs(&ifap) < 0) { emit_error("getifaddrs: %s", strerror(errno)); return 0; }
 
     char seen[MAX_IFACES][MAX_IFACE_NAME]; int n_seen = 0;
-    for (p = ifap; p && n_seen < MAX_IFACES; p = p->ifa_next) {
+    int hit_cap = 0;
+    for (p = ifap; p; p = p->ifa_next) {
+        if (n_seen >= MAX_IFACES) { hit_cap = 1; break; }
         const char *name = p->ifa_name;
         if (!name) continue;
         if (!(p->ifa_flags & IFF_UP)) continue;
@@ -471,6 +482,12 @@ static int enumerate_and_open(void) {
         N_IFACES++;
     }
     freeifaddrs(ifap);
+    if (hit_cap) {
+        emit_error("hit MAX_IFACES (%d) — additional interfaces were "
+                   "ignored. Increase MAX_IFACES in helper/src/main.c "
+                   "if your host has more usable adapters than that.",
+                   MAX_IFACES);
+    }
     return N_IFACES;
 }
 #endif /* !_WIN32 */
@@ -485,7 +502,9 @@ static int enumerate_and_open(void) {
         return 0;
     }
 
-    for (pcap_if_t *d = alldevs; d && N_IFACES < MAX_IFACES; d = d->next) {
+    int hit_cap = 0;
+    for (pcap_if_t *d = alldevs; d; d = d->next) {
+        if (N_IFACES >= MAX_IFACES) { hit_cap = 1; break; }
         if (!d->name) continue;
         if (d->flags & PCAP_IF_LOOPBACK) continue;
 
@@ -503,19 +522,17 @@ static int enumerate_and_open(void) {
         N_IFACES++;
     }
     pcap_freealldevs(alldevs);
+    if (hit_cap) {
+        emit_error("hit MAX_IFACES (%d) — additional interfaces were "
+                   "ignored. Increase MAX_IFACES in helper/src/main.c "
+                   "if your host has more usable adapters than that.",
+                   MAX_IFACES);
+    }
     return N_IFACES;
 }
 #endif /* _WIN32 */
 
 /* ---- stdin commands ------------------------------------------------ */
-
-static int parse_hex64(const char *s, uint64_t *out) {
-    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
-    char *end = NULL;
-    unsigned long long v = strtoull(s, &end, 16);
-    if (end == s) return -1;
-    *out = (uint64_t)v; return 0;
-}
 
 static void handle_stdin_command(char *line) {
     size_t n = strlen(line);
@@ -527,17 +544,6 @@ static void handle_stdin_command(char *line) {
     if (strncmp(line, "discover", 8) == 0) {
         int sent = send_discover_on_all(0);
         emit_event("sent_discover", "\"entity_id\":\"0000000000000000\",\"ifaces\":%d", sent);
-        return;
-    }
-    if (strncmp(line, "identify ", 9) == 0) {
-        uint64_t target;
-        if (parse_hex64(line + 9, &target) < 0) {
-            emit_error("bad entity id in 'identify' command"); return;
-        }
-        int sent = send_discover_on_all(target);
-        emit_event("sent_discover",
-                   "\"entity_id\":\"%016llx\",\"ifaces\":%d",
-                   (unsigned long long)target, sent);
         return;
     }
     emit_error("unknown command: %s", line);

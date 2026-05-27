@@ -14,17 +14,10 @@ const fs = require('node:fs')
 // Resolved relative to the running main.js so it works in both modes:
 //   - dev mode    → <module>/helper/prebuilt
 //   - companion-module-build pkg → <pkg>/prebuilt (extraFiles flattens it)
-function resolvePrebuiltDir() {
-	const moduleDir = path.dirname(process.argv[1] || '')
-	for (const c of [
-		path.join(moduleDir, 'helper', 'prebuilt'),
-		path.join(moduleDir, 'prebuilt'),
-	]) {
-		if (fs.existsSync(c)) return c
-	}
-	return path.join(moduleDir, 'helper', 'prebuilt')
-}
-const PREBUILT_DIR = resolvePrebuiltDir()
+const MODULE_DIR = path.dirname(process.argv[1] || '')
+const PREBUILT_DIR = fs.existsSync(path.join(MODULE_DIR, 'helper', 'prebuilt'))
+	? path.join(MODULE_DIR, 'helper', 'prebuilt')
+	: path.join(MODULE_DIR, 'prebuilt')
 
 function helperBinaryName() {
 	const target =
@@ -49,19 +42,18 @@ class DiscoveryHelper extends EventEmitter {
 		this.proc = null
 		this.rl = null
 		this.devices = new Map()
-		this.interfaces = []
 		this.expireTimer = null
 		this.restartTimer = null
 		this.expectedExit = false
 	}
 
 	start() {
+		// Clear any pending restart so back-to-back start() calls (e.g. a
+		// rapid disable→enable cycle in Companion) can't leave a second
+		// restartTimer firing into a new process.
+		if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null }
+
 		const bin = helperBinaryPath()
-		if (!fs.existsSync(bin)) {
-			this.emit('helper-error', `helper binary not found: ${bin}`)
-			this.log('error', `helper binary not found: ${bin}`)
-			return
-		}
 		this.log('info', `spawning ${bin}`)
 		this.expectedExit = false
 		this.gotReady = false
@@ -69,7 +61,10 @@ class DiscoveryHelper extends EventEmitter {
 		try {
 			this.proc = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] })
 		} catch (e) {
+			// spawn throws ENOENT if the binary is missing — same intent as
+			// the previous existsSync check, without the race window.
 			this.emit('helper-error', `spawn failed: ${e.message}`)
+			this.log('error', `spawn failed: ${e.message}`)
 			return
 		}
 
@@ -151,16 +146,6 @@ class DiscoveryHelper extends EventEmitter {
 		this.devices.clear()
 	}
 
-	triggerDiscover() {
-		if (!this.proc) return false
-		try { this.proc.stdin.write('discover\n'); return true } catch (_) { return false }
-	}
-
-	identify(entityIdHex) {
-		if (!this.proc) return false
-		try { this.proc.stdin.write(`identify ${entityIdHex}\n`); return true } catch (_) { return false }
-	}
-
 	_onLine(line) {
 		let msg
 		try { msg = JSON.parse(line) } catch (_) {
@@ -169,7 +154,6 @@ class DiscoveryHelper extends EventEmitter {
 		switch (msg.event) {
 			case 'ready':
 				this.gotReady = true
-				this.interfaces = Array.isArray(msg.interfaces) ? msg.interfaces : []
 				this.emit('ready', msg)
 				return
 			case 'sent_discover':
@@ -228,4 +212,4 @@ class DiscoveryHelper extends EventEmitter {
 	}
 }
 
-module.exports = { DiscoveryHelper, helperBinaryName, helperBinaryPath }
+module.exports = { DiscoveryHelper }

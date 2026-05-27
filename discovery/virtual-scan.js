@@ -15,10 +15,17 @@ const VIRTUAL_PORT_STEP = 100
 const VIRTUAL_MIN_ID = 1
 const VIRTUAL_MAX_ID = 20
 const HOST = '127.0.0.1'
+// A test instance bound to the real-Galaxy port 25003 on localhost is
+// picked up alongside the conventional virtual port range.
 const STANDALONE_PORT = 25003
 
 const SCAN_INTERVAL_MS = 10000
 const PROBE_TIMEOUT_MS = 800
+// If the first AUTO_DISABLE_AFTER_MS elapse without ever finding a
+// virtual, stop the periodic scan. Most production users never run a
+// virtual, so we'd otherwise burn 21 TCP connect attempts every 10s
+// forever with no benefit.
+const AUTO_DISABLE_AFTER_MS = 60000
 
 const TX_EOL = '\n'
 const EOL_SPLIT = /\r\n|\n|\r/
@@ -113,10 +120,13 @@ class VirtualGalaxyScanner extends EventEmitter {
 		this.timer = null
 		this.known = new Map()
 		this._inFlight = false
+		this._startedAt = 0
+		this._everFound = false
 	}
 
 	start() {
 		if (this.timer) return
+		this._startedAt = Date.now()
 		this._scan().catch(() => {})
 		this.timer = setInterval(() => this._scan().catch(() => {}), this.intervalMs)
 	}
@@ -147,9 +157,10 @@ class VirtualGalaxyScanner extends EventEmitter {
 					host: HOST,
 					port,
 					lastSeen: now,
-					is_virtual: true,
 				})
 			}
+
+			if (found.size > 0) this._everFound = true
 
 			for (const [port, dev] of found) {
 				const prev = this.known.get(port)
@@ -165,12 +176,23 @@ class VirtualGalaxyScanner extends EventEmitter {
 					this.emit('virtual-removed', prev)
 				}
 			}
+
+			// Production hosts almost never have a virtual running. Once
+			// we've scanned for AUTO_DISABLE_AFTER_MS without ever finding
+			// one, stop the periodic timer to avoid burning 21 TCP connects
+			// every interval forever.
+			if (
+				this.timer &&
+				!this._everFound &&
+				now - this._startedAt >= AUTO_DISABLE_AFTER_MS
+			) {
+				clearInterval(this.timer)
+				this.timer = null
+			}
 		} finally {
 			this._inFlight = false
 		}
 	}
-
-	snapshot() { return [...this.known.values()] }
 }
 
 module.exports = { VirtualGalaxyScanner }
