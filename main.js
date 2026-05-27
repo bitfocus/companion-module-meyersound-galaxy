@@ -11,6 +11,7 @@ const { SNAPSHOT_MAX, displayBrightnessLabel, displayColorLabel } = require('./h
 const { DiscoveryHelper } = require('./discovery/helper')
 const { VirtualGalaxyScanner } = require('./discovery/virtual-scan')
 const { macToIPv6LinkLocal, modelNameFromEntityModelId } = require('./discovery/galaxy-meta')
+const discoveryCache = require('./discovery/cache')
 
 // Protocol constants
 const EOL_SPLIT = /\r\n|\n|\r/ // Line ending split pattern for incoming data
@@ -319,19 +320,36 @@ class ModuleInstance extends InstanceBase {
 		this._seedVariables()
 		this._updateSpeakerTestVars()
 
-		// Restore the saved label for the picked Galaxy so the dropdown
-		// shows it as "Name · Model (offline)" if the device is down.
+		// Restore the saved label + last-known host/port for the picked
+		// Galaxy so the dropdown can show it as "Name · Model (offline)"
+		// when the device is down, AND so _resolveHostPortFromConfig can
+		// hand back a usable target before discovery has a chance to run.
+		// Encoding: "name|model|host|port". Older configs only have the
+		// first two fields — the trailing host/port stay null and we fall
+		// back to waiting for discovery as before.
 		if (this.config?.auto_key && this.config?._remembered_label) {
 			const parts = String(this.config._remembered_label).split('|')
+			const portNum = parts[3] ? parseInt(parts[3], 10) : NaN
 			this._lastKnownLabels.set(this.config.auto_key, {
 				name:  parts[0] || '',
 				model: parts[1] || '',
+				host:  parts[2] || '',
+				port:  Number.isFinite(portNum) ? portNum : null,
 			})
 		}
 
 		this._startDiscovery()
-		// _startSubscribe is fired automatically when a Galaxy matching
-		// the user's `auto_key` shows up in the discovered list.
+
+		// Option C shortcut: if the saved _remembered_label includes a
+		// host/port from the last successful subscription, _startDiscovery
+		// already kicked off a hydrate-from-cache pass that may have fired
+		// _maybeStartSubscribe via the cache hit. If that didn't happen
+		// (no cache, or different device), but we still have a remembered
+		// host/port, try connecting to that immediately so the green
+		// status appears within ~50ms instead of after the discovery
+		// settle window. _resolveHostPortFromConfig now falls back to the
+		// cached entry when the device isn't in _mdnsDevices yet.
+		this._maybeStartSubscribe()
 	}
 
 	async destroy() {
@@ -4118,22 +4136,53 @@ class ModuleInstance extends InstanceBase {
 	_startDiscovery() {
 		// Reset stable detector. Discovery stays "in progress" (orange
 		// status spinner) until the device list has been quiet for QUIET_MS
-		// straight, after a MIN_MS floor.
+		// straight, after a MIN_MS floor. When the spinner stops, any
+		// cache-hydrated entries the helper hasn't confirmed are pruned —
+		// they're stale (device unplugged since last write) and shouldn't
+		// linger as ghosts in the dropdown.
 		const MIN_MS   = 2000
 		const QUIET_MS = 3000
 		this._discoveryStable = false
 		this._lastDeviceArrivalAt = Date.now()
+		this._confirmedKeys = new Set()
+		this._cacheHydratedKeys = null
 		if (this._discoveryStableTimer) clearInterval(this._discoveryStableTimer)
 		const startedAt = Date.now()
 		this._discoveryStableTimer = setInterval(() => {
 			const now = Date.now()
 			if (now - startedAt < MIN_MS) return
 			if (now - this._lastDeviceArrivalAt < QUIET_MS) return
+			if (this._cacheHydratedKeys) {
+				let pruned = false
+				for (const key of this._cacheHydratedKeys) {
+					if (this._confirmedKeys.has(key)) continue
+					const i = this._mdnsDevices.findIndex((d) => d.key === key)
+					if (i >= 0) { this._mdnsDevices.splice(i, 1); pruned = true }
+				}
+				this._cacheHydratedKeys = null
+				if (pruned) this._scheduleCacheWrite()
+			}
 			this._discoveryStable = true
 			clearInterval(this._discoveryStableTimer)
 			this._discoveryStableTimer = null
 			this._refreshDiscoveryStatus()
 		}, 500)
+
+		// Hydrate from the shared on-disk cache so newly-added module
+		// instances see the dropdown populated immediately instead of
+		// waiting on their own discovery cycle. The spinner still runs
+		// the normal verification window above; ghosts get pruned when
+		// it stops. If no instance has written recently, readCache
+		// returns null and we fall back to a cold scan as before.
+		const cached = discoveryCache.readCache()
+		if (cached && cached.length) {
+			this._mdnsDevices = cached.map((d) => ({ ...d }))
+			this._cacheHydratedKeys = new Set(cached.map((d) => d.key))
+			for (const d of this._mdnsDevices) {
+				this._rememberLabel(d.key, d.name, d.model, d.host, d.port)
+			}
+			this._maybeStartSubscribe()
+		}
 
 		// LAN: ATDECC ADP helper, auto-listening on every plausible interface.
 		this._discoveryHelper = new DiscoveryHelper({
@@ -4168,6 +4217,10 @@ class ModuleInstance extends InstanceBase {
 			clearInterval(this._discoveryStableTimer)
 			this._discoveryStableTimer = null
 		}
+		if (this._cacheWriteTimer) {
+			clearTimeout(this._cacheWriteTimer)
+			this._cacheWriteTimer = null
+		}
 		if (this._discoveryHelper) {
 			try { this._discoveryHelper.stop() } catch {}
 			this._discoveryHelper = null
@@ -4194,7 +4247,9 @@ class ModuleInstance extends InstanceBase {
 		else this._mdnsDevices.push(entry)
 
 		this._lastDeviceArrivalAt = Date.now()
-		this._rememberLabel(key, entry.name, entry.model)
+		this._confirmedKeys?.add(key)
+		this._rememberLabel(key, entry.name, entry.model, host, port)
+		this._scheduleCacheWrite()
 
 		// One-shot entity_name fetch over TCP so the dropdown can show a
 		// friendly label instead of just the model.
@@ -4227,7 +4282,9 @@ class ModuleInstance extends InstanceBase {
 		else this._mdnsDevices.push(entry)
 
 		this._lastDeviceArrivalAt = Date.now()
-		this._rememberLabel(key, entry.name, entry.model)
+		this._confirmedKeys?.add(key)
+		this._rememberLabel(key, entry.name, entry.model, host, port)
+		this._scheduleCacheWrite()
 
 		this._maybeStartSubscribe()
 		this._scheduleActionsRefresh()
@@ -4240,9 +4297,21 @@ class ModuleInstance extends InstanceBase {
 		const i = this._mdnsDevices.findIndex((d) => d.key === key)
 		if (i < 0) return
 		this._mdnsDevices.splice(i, 1)
+		this._scheduleCacheWrite()
 		this._refreshDiscoveryStatus()
 		this._scheduleActionsRefresh()
 		this._scheduleFeedbacksRefresh()
+	}
+
+	/** Debounced write of the current device list to the shared cache
+	 *  file so newly-spawned module instances can populate their dropdown
+	 *  immediately instead of waiting on their own discovery cycle. */
+	_scheduleCacheWrite() {
+		if (this._cacheWriteTimer) return
+		this._cacheWriteTimer = setTimeout(() => {
+			this._cacheWriteTimer = null
+			try { discoveryCache.writeCache(this._mdnsDevices) } catch {}
+		}, 500)
 	}
 
 	_fetchEntityNameAsync(key, host, port) {
@@ -4260,7 +4329,8 @@ class ModuleInstance extends InstanceBase {
 			const cur = this._mdnsDevices.find((d) => d.key === key)
 			if (!cur) return
 			cur.name = name
-			this._rememberLabel(key, name, cur.model)
+			this._rememberLabel(key, name, cur.model, cur.host, cur.port)
+			this._scheduleCacheWrite()
 			this._scheduleActionsRefresh()
 			this._scheduleFeedbacksRefresh()
 			this._scheduleVariablesRefresh()
@@ -4291,16 +4361,18 @@ class ModuleInstance extends InstanceBase {
 		} catch { finish(null) }
 	}
 
-	_rememberLabel(key, name, model) {
+	_rememberLabel(key, name, model, host, port) {
 		if (!key) return
 		const cur = this._lastKnownLabels.get(key) || {}
 		const merged = {
 			name:  name  || cur.name  || '',
 			model: model || cur.model || '',
+			host:  host  || cur.host  || '',
+			port:  port  || cur.port  || null,
 		}
 		this._lastKnownLabels.set(key, merged)
 		if (key === this.config?.auto_key) {
-			const encoded = `${merged.name}|${merged.model}`
+			const encoded = `${merged.name}|${merged.model}|${merged.host}|${merged.port ?? ''}`
 			if (this.config?._remembered_label !== encoded) {
 				const next = { ...this.config, _remembered_label: encoded }
 				this.config = next
@@ -4468,7 +4540,14 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	/** Resolve host/port from the currently-selected dropdown entry, with
-	 *  the manual-IP fallback when "(manual IP / hostname)" is picked. */
+	 *  the manual-IP fallback when "(manual address)" is picked. As a
+	 *  second-chance fallback (Option C in the discovery design), if the
+	 *  device isn't in the live list yet, return the last-known host/port
+	 *  saved in the _remembered_label config field — that lets us start a
+	 *  TCP subscribe immediately after a Companion restart without waiting
+	 *  for discovery to confirm the device is back. If the cached host is
+	 *  stale, the subscribe will fail and we'll fall back through the
+	 *  normal reconnect / wait-for-discovery path. */
 	_resolveHostPortFromConfig() {
 		const key = this.config?.auto_key
 		if (key === '__manual__') {
@@ -4476,8 +4555,12 @@ class ModuleInstance extends InstanceBase {
 		}
 		if (!key) return { host: null, port: null }
 		const d = this._mdnsDevices.find((d) => d.key === key)
-		if (!d) return { host: null, port: null }
-		return { host: d.host, port: d.port }
+		if (d) return { host: d.host, port: d.port }
+		const cached = this._lastKnownLabels.get(key)
+		if (cached?.host && cached?.port) {
+			return { host: cached.host, port: cached.port }
+		}
+		return { host: null, port: null }
 	}
 }
 
