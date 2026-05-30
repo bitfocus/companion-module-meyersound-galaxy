@@ -41,13 +41,14 @@ Configure multiple outputs for line array deployments with a single action:
 - LMBC (Low-Mid Beam Control) configuration with beam angle, control type, and array assignment
 
 ### Subwoofer Design Assist
-Four deployment modes for subwoofer configurations:
+Five deployment modes for subwoofer configurations:
 - **End-Fire** — Calculate and apply delay taps based on target frequency and air temperature. Supports 2–8 taps with recommended spacing preview.
 - **Array** — Configure arc/curved arrays with delay timing based on sub spacing, arc angle, and temperature. Automatic symmetric delay calculation.
 - **Array End-Fire** — Combines end-fire rows with arc configuration for multi-row deployments.
 - **Gradient** — Apply gradient subwoofer presets with front and reversed polarity outputs.
+- **End-Fire Gradient** — Combines gradient and end-fire. Pick a loudspeaker, its phase curve (PC63 / PC100 / PC125, as available), the number of end-fire taps, and the first front-facing and first rear-facing output; the remaining outputs are filled in automatically. Adjacent first outputs (e.g. front 1, rear 2) interleave the pairs (1,3,5… front / 2,4,6… rear); a larger gap lays them out as consecutive blocks (e.g. front 1, rear 5 with 4 taps → 1–4 front / 5–8 rear). The correct front/rear starting point is chosen automatically per loudspeaker. Each tap's end-fire delay (from target frequency and air temperature) is added on top of the cabinet gradient delay carried by the rear-facing outputs; front-facing outputs receive the end-fire delay only. Loudspeakers without a factory rear-facing preset accept a manual rear delay, with polarity reversed automatically. An optional channel-name prefix names each output "&lt;prefix&gt; T# Front" / "&lt;prefix&gt; T# Rear".
 
-All modes support loudspeaker selection for product integration, starting points, output link group assignment, and optional factory reset before applying settings.
+All modes support loudspeaker selection for product integration, starting points, output link group assignment, and optional factory reset before applying settings. Each mode also accepts an optional channel-name prefix (e.g. "Sub") that names the configured outputs with a role/position suffix, and selecting an Output Link Group automatically enables it (choose "None" to leave link groups untouched).
 
 ### Inputs
 - Mute, unmute, toggle

@@ -64,7 +64,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 	const arrayStartingPointOptionDefs = PRODUCT_INTEGRATION_DATA.arrayStartingPointOptionDefs || []
 	const arrayendfireStartingPointOptionDefs = PRODUCT_INTEGRATION_DATA.arrayendfireStartingPointOptionDefs || []
 	const gradientStartingPointOptionDefs_Front = PRODUCT_INTEGRATION_DATA.gradientStartingPointOptionDefs_Front || []
-	const gradientStartingPointOptionDefs_Reversed = PRODUCT_INTEGRATION_DATA.gradientStartingPointOptionDefs_Reversed || []
+	const gradientStartingPointOptionDefs_Reversed =
+		PRODUCT_INTEGRATION_DATA.gradientStartingPointOptionDefs_Reversed || []
 
 	/**
 	 * Generate output link group choices with names
@@ -83,12 +84,138 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 	const productIntegrationStartingPoints = PRODUCT_INTEGRATION_DATA.startingPoints || new Map()
 	const endfireSpeakerStartingPointOption = PRODUCT_INTEGRATION_DATA.endfireSpeakerStartingPointOption || new Map()
 	const arraySpeakerStartingPointOption = PRODUCT_INTEGRATION_DATA.arraySpeakerStartingPointOption || new Map()
-	const arrayendfireSpeakerStartingPointOption = PRODUCT_INTEGRATION_DATA.arrayendfireSpeakerStartingPointOption || new Map()
-	const gradientSpeakerStartingPointOption_Front = PRODUCT_INTEGRATION_DATA.gradientSpeakerStartingPointOption_Front || new Map()
-	const gradientSpeakerStartingPointOption_Reversed = PRODUCT_INTEGRATION_DATA.gradientSpeakerStartingPointOption_Reversed || new Map()
+	const arrayendfireSpeakerStartingPointOption =
+		PRODUCT_INTEGRATION_DATA.arrayendfireSpeakerStartingPointOption || new Map()
+	const gradientSpeakerStartingPointOption_Front =
+		PRODUCT_INTEGRATION_DATA.gradientSpeakerStartingPointOption_Front || new Map()
+	const gradientSpeakerStartingPointOption_Reversed =
+		PRODUCT_INTEGRATION_DATA.gradientSpeakerStartingPointOption_Reversed || new Map()
 
 	const outputChoices = buildOutputChoices(self, NUM_OUTPUTS)
 	const outputChoicesFriendly = outputChoices
+
+	// Optional channel naming shared by every mode: when a prefix is set, name an output
+	// "<prefix> <suffix>" and mirror it into local state + the output_<ch>_name variable.
+	const applyChannelName = (ch, prefix, suffix) => {
+		const p = String(prefix || '').trim()
+		if (!p) return
+		const channelName = suffix ? `${p} ${suffix}` : p
+		self._cmdSendLine(`/device/output/${ch}/name='${channelName}'`)
+		if (!self.outputName) self.outputName = {}
+		self.outputName[ch] = channelName
+		self.setVariableValues?.({ [`output_${ch}_name`]: channelName })
+	}
+
+	// Shared Output Link Group handling for every mode. Given the outputs an action just
+	// configured and the selected link-group option:
+	//   - a real group (1-8) → assign those outputs to it and enable (un-bypass) the group
+	//   - "None" (0)          → unassign those outputs and disable (bypass) the group(s) they were in
+	// Returns log lines describing what changed.
+	const applyLinkGroup = (channels, linkGroupOpt) => {
+		const linkGroup = String(linkGroupOpt || '0')
+		const groupNum = Number(linkGroup)
+		const lines = []
+		if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
+		if (!self.outputLinkGroupBypass) self.outputLinkGroupBypass = {}
+
+		if (groupNum >= 1 && groupNum <= 8) {
+			for (const ch of channels) {
+				self._cmdSendLine(`/device/output/${ch}/output_link_group='${linkGroup}'`)
+				self.outputLinkGroupAssign[ch] = groupNum
+			}
+			self._cmdSendLine(`/device/output_link_group/${groupNum}/bypass='false'`)
+			self.outputLinkGroupBypass[groupNum] = false
+			lines.push(`Link Group ${groupNum}: Enabled`)
+		} else {
+			// "None": revert — unassign these outputs and disable the group(s) they belonged to
+			const affected = new Set()
+			for (const ch of channels) {
+				const prev = Number(self.outputLinkGroupAssign[ch] || 0)
+				if (prev >= 1 && prev <= 8) affected.add(prev)
+				self._cmdSendLine(`/device/output/${ch}/output_link_group='0'`)
+				self.outputLinkGroupAssign[ch] = 0
+			}
+			for (const g of affected) {
+				self._cmdSendLine(`/device/output_link_group/${g}/bypass='true'`)
+				self.outputLinkGroupBypass[g] = true
+				lines.push(`Link Group ${g}: Disabled (outputs unassigned)`)
+			}
+		}
+
+		if (typeof self.checkFeedbacks === 'function') {
+			self.checkFeedbacks('output_link_group_bypassed')
+			self.checkFeedbacks('output_link_group_assigned')
+		}
+		return lines
+	}
+
+	// Helper: does a starting-point title look like a front/rear facing preset?
+	const isFrontFacingTitle = (title) => /front\s*facing/i.test(String(title || ''))
+	const isRearFacingTitle = (title) => /rear\s*facing/i.test(String(title || ''))
+
+	// Loudspeakers that ship a Front Facing preset but no Rear Facing one. In End-Fire
+	// Gradient mode these need a user-supplied rear delay (polarity is reversed automatically).
+	const noRearFacingSpeakers = []
+	for (const [key, entries] of productIntegrationStartingPoints.entries()) {
+		if (!Array.isArray(entries)) continue
+		const hasFront = entries.some((e) => isFrontFacingTitle(e.title))
+		const hasRear = entries.some((e) => isRearFacingTitle(e.title))
+		if (hasFront && !hasRear) noRearFacingSpeakers.push(key)
+	}
+
+	// End-Fire Gradient builds each tap (a front-facing + reversed rear-facing gradient pair) from
+	// just the first front output and first rear output, auto-filling the rest from the tap count.
+	const EG_MAX_TAPS = 8
+
+	// Speaker keys that have a Front Facing preset but no Rear Facing one, inlined as a JSON
+	// literal so the isVisible functions below stay self-contained when Companion serializes them.
+	const noRearFacingJson = JSON.stringify(noRearFacingSpeakers)
+	const egNoRearVisible = new Function(
+		'options',
+		`return !!options && options.mode === 'endfire_gradient' && ${noRearFacingJson}.includes(options.eg_speaker)`,
+	)
+
+	// Phase Curve (PC63 / PC100 / PC125) option defs for End-Fire Gradient, grouped by the set of
+	// phases a loudspeaker offers so speakers with identical choices share one dropdown. The selected
+	// phase resolves to the delay_integration type id applied to that speaker's outputs.
+	const egPhaseGroups = new Map() // comboKey -> { choices, defaultId, speakers[] }
+	for (const speaker of productIntegrationSpeakers.values()) {
+		if (speaker.key === 'OFF' || !Array.isArray(speaker.phases) || speaker.phases.length === 0) continue
+		const comboKey = speaker.phases
+			.map((p) => p.id)
+			.sort((a, b) => a.localeCompare(b))
+			.join('|')
+		let group = egPhaseGroups.get(comboKey)
+		if (!group) {
+			group = {
+				choices: speaker.phases.map((p) => ({ id: p.id, label: p.label })),
+				defaultId: speaker.phases[0].id,
+				speakers: [],
+			}
+			egPhaseGroups.set(comboKey, group)
+		}
+		group.speakers.push(speaker.key)
+	}
+	const egPhaseOptionDefs = []
+	const egSpeakerPhaseOption = new Map() // speaker.key -> option id
+	let egPhaseCounter = 0
+	for (const group of egPhaseGroups.values()) {
+		const optionId = `eg_phase_${++egPhaseCounter}`
+		const allowedJson = JSON.stringify(group.speakers)
+		const isVisible = new Function(
+			'options',
+			`return !!options && options.mode === 'endfire_gradient' && ${allowedJson}.includes(options.eg_speaker)`,
+		)
+		egPhaseOptionDefs.push({
+			type: 'dropdown',
+			id: optionId,
+			label: 'Phase Curve',
+			default: group.defaultId,
+			choices: group.choices,
+			isVisible,
+		})
+		for (const sp of group.speakers) egSpeakerPhaseOption.set(sp, optionId)
+	}
 
 	actions['subassist_combined'] = {
 		name: 'Sub Design Assist',
@@ -103,6 +230,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'array', label: 'Array' },
 					{ id: 'array_endfire', label: 'Array End-Fire' },
 					{ id: 'gradient', label: 'Gradient' },
+					{ id: 'endfire_gradient', label: 'End-Fire Gradient' },
 				],
 			},
 
@@ -257,19 +385,20 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 8,
 			},
 			{
+				type: 'textinput',
+				id: 'endfire_channel_prefix',
+				label: 'Channel name prefix (optional)',
+				default: '',
+				tooltip: 'When set, names each output "<prefix> T#" (e.g. "Sub T0", "Sub T1")',
+				isVisible: (o) => o.mode === 'endfire',
+			},
+			{
 				type: 'dropdown',
 				id: 'endfire_link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'endfire',
-			},
-			{
-				type: 'checkbox',
-				id: 'endfire_link_group_enable',
-				label: 'Enable the selected Output Link Group',
-				default: true,
-				isVisible: (o) => o.mode === 'endfire' && o.endfire_link_group !== '0',
 			},
 
 			// ===== ARRAY OPTIONS =====
@@ -364,19 +493,20 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array',
 			},
 			{
+				type: 'textinput',
+				id: 'array_channel_prefix',
+				label: 'Channel name prefix (optional)',
+				default: '',
+				tooltip: 'When set, names each output "<prefix> #" (e.g. "Sub 1", "Sub 2")',
+				isVisible: (o) => o.mode === 'array',
+			},
+			{
 				type: 'dropdown',
 				id: 'array_link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'array',
-			},
-			{
-				type: 'checkbox',
-				id: 'array_link_group_enable',
-				label: 'Enable the selected Output Link Group',
-				default: true,
-				isVisible: (o) => o.mode === 'array' && o.array_link_group !== '0',
 			},
 
 			// ===== ARRAY END-FIRE OPTIONS =====
@@ -548,19 +678,20 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			{
+				type: 'textinput',
+				id: 'arrayendfire_channel_prefix',
+				label: 'Channel name prefix (optional)',
+				default: '',
+				tooltip: 'When set, names each output "<prefix> <Row> #" (e.g. "Sub Front 1")',
+				isVisible: (o) => o.mode === 'array_endfire',
+			},
+			{
 				type: 'dropdown',
 				id: 'arrayendfire_link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'array_endfire',
-			},
-			{
-				type: 'checkbox',
-				id: 'arrayendfire_link_group_enable',
-				label: 'Enable the selected Output Link Group',
-				default: true,
-				isVisible: (o) => o.mode === 'array_endfire' && o.arrayendfire_link_group !== '0',
 			},
 
 			// ===== GRADIENT OPTIONS =====
@@ -600,6 +731,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'gradient',
 			},
 			{
+				type: 'textinput',
+				id: 'gradient_channel_prefix',
+				label: 'Channel name prefix (optional)',
+				default: '',
+				tooltip: 'When set, names each output "<prefix> Front" / "<prefix> Reversed"',
+				isVisible: (o) => o.mode === 'gradient',
+			},
+			{
 				type: 'dropdown',
 				id: 'gradient_link_group',
 				label: 'Assign to Output Link Group',
@@ -607,12 +746,135 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'gradient',
 			},
+
+			// ===== END-FIRE GRADIENT OPTIONS =====
+			{
+				type: 'dropdown',
+				id: 'eg_speaker',
+				label: 'Loudspeaker',
+				default: '',
+				choices: subwooferSpeakerChoices,
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			...egPhaseOptionDefs,
+			{
+				type: 'static-text',
+				id: 'eg_no_rear_warning',
+				label: 'No factory Rear Facing preset',
+				value:
+					'This loudspeaker has no factory rear-facing settings. Enter a rear delay below — polarity is reversed automatically on the negative outputs.',
+				isVisible: egNoRearVisible,
+			},
+			{
+				type: 'number',
+				id: 'eg_manual_rear_delay_ms',
+				label: 'Rear delay (ms)',
+				default: 0,
+				min: 0,
+				max: 100,
+				step: 0.01,
+				isVisible: egNoRearVisible,
+			},
+			{
+				type: 'number',
+				id: 'freq_eg',
+				label: 'Target frequency (Hz)',
+				default: 80,
+				min: 10,
+				max: 200,
+				step: 1,
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'number',
+				id: 'temp_eg',
+				label: 'Air temperature',
+				default: 20,
+				min: -40,
+				max: 140,
+				step: 0.1,
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'tempUnit_eg',
+				label: 'Temperature unit',
+				default: 'C',
+				choices: [
+					{ id: 'C', label: '°C' },
+					{ id: 'F', label: '°F' },
+				],
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'static-text',
+				id: 'eg_spacing_preview',
+				label: 'Recommended front/rear spacing',
+				value: subassistPreview(self),
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'static-text',
+				id: 'eg_speed_preview',
+				label: 'Speed of sound',
+				value: endfirePreview(self),
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'eg_depth',
+				label: 'Depth (number of end-fire taps)',
+				default: '2',
+				choices: [
+					{ id: '1', label: '1 (T0 — gradient only)' },
+					{ id: '2', label: '2 (T0..T1)' },
+					{ id: '3', label: '3 (T0..T2)' },
+					{ id: '4', label: '4 (T0..T3)' },
+					{ id: '5', label: '5 (T0..T4)' },
+					{ id: '6', label: '6 (T0..T5)' },
+					{ id: '7', label: '7 (T0..T6)' },
+					{ id: '8', label: '8 (T0..T7)' },
+				],
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'eg_first_front',
+				label: 'First front-facing output',
+				default: '1',
+				choices: outputChoicesFriendly,
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'eg_first_rear',
+				label: 'First rear-facing output',
+				default: '2',
+				choices: outputChoicesFriendly,
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'textinput',
+				id: 'eg_channel_prefix',
+				label: 'Channel name prefix (optional)',
+				default: '',
+				tooltip: 'When set, names each output "<prefix> T# Front" / "<prefix> T# Rear" (e.g. "Sub Floor T0 Front")',
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
 			{
 				type: 'checkbox',
-				id: 'gradient_link_group_enable',
-				label: 'Enable the selected Output Link Group',
-				default: true,
-				isVisible: (o) => o.mode === 'gradient' && o.gradient_link_group !== '0',
+				id: 'reset_eg',
+				label: 'Reset channels to factory defaults before applying',
+				default: false,
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'eg_link_group',
+				label: 'Assign to Output Link Group',
+				default: '0',
+				choices: getOutputLinkGroupChoices(),
+				isVisible: (o) => o.mode === 'endfire_gradient',
 			},
 		],
 		callback: async (e) => {
@@ -679,12 +941,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 				// Check if factory reset is enabled
 				const shouldReset = e.options.reset_endfire === true
+				const channelPrefix = String(e.options?.endfire_channel_prefix || '').trim()
+				const configuredChannels = []
 
 				const lines = []
 				for (let t = 0; t < taps.length; t++) {
 					const targetSamples = t * perTapSamples
 					const targetMs = targetSamples / 96
-					for (const ch of taps[t]) {
+					for (let k = 0; k < taps[t].length; k++) {
+						const ch = taps[t][k]
+						const nameSuffix = taps[t].length > 1 ? `T${t} ${k + 1}` : `T${t}`
 						// Apply factory reset if checkbox is enabled
 						if (shouldReset) {
 							for (const resetCmd of FACTORY_RESET_COMMANDS) {
@@ -707,18 +973,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						// Apply end-fire delay
 						self._cmdSendLine(`/processing/output/${ch}/delay=${targetSamples}`)
 						self._applyOutputDelay(ch, targetSamples)
-
-						// Apply link group assignment if specified
-						const linkGroup = String(e.options?.endfire_link_group || '0')
-						if (linkGroup !== '0') {
-							const groupNum = Number(linkGroup)
-							if (groupNum >= 1 && groupNum <= 8) {
-								self._cmdSendLine(`/device/output/${ch}/output_link_group='${linkGroup}'`)
-								// Update local state
-								if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
-								self.outputLinkGroupAssign[ch] = groupNum
-							}
-						}
+						applyChannelName(ch, channelPrefix, nameSuffix)
+						configuredChannels.push(ch)
 
 						const spLabel =
 							speakerKey && speakerKey !== 'OFF'
@@ -728,25 +984,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					}
 				}
 
-				// Apply link group bypass state if link group was assigned
-				const linkGroup = String(e.options?.endfire_link_group || '0')
-				if (linkGroup !== '0') {
-					const groupNum = Number(linkGroup)
-					if (groupNum >= 1 && groupNum <= 8) {
-						// Enable = not bypassed (false), Disable = bypassed (true)
-						const shouldBypass = e.options?.endfire_link_group_enable !== true
-						self._cmdSendLine(`/device/output_link_group/${groupNum}/bypass='${shouldBypass}'`)
-						// Update local state
-						if (!self.outputLinkGroupBypass) self.outputLinkGroupBypass = {}
-						self.outputLinkGroupBypass[groupNum] = shouldBypass
-						if (typeof self.checkFeedbacks === 'function') {
-							self.checkFeedbacks('output_link_group_bypassed')
-							self.checkFeedbacks('output_link_group_assigned')
-						}
-						const groupStatus = shouldBypass ? 'Disabled (Bypassed)' : 'Enabled'
-						lines.push(`Link Group ${groupNum}: ${groupStatus}`)
-					}
-				}
+				// Assign/enable or (for "None") unassign/disable the Output Link Group
+				lines.push(...applyLinkGroup(configuredChannels, e.options?.endfire_link_group))
 
 				if (lines.length) {
 					const c_fps = c * 3.28084
@@ -835,16 +1074,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						const AcC_virtual = -spacingM / singleSplayRad // Virtual acoustic center (negative radius)
 
 						// Base angle offset for even/odd speaker count
-						const baseAngleDeg = (n % 2 === 0) ? singleSplayDeg / 2 : 0
+						const baseAngleDeg = n % 2 === 0 ? singleSplayDeg / 2 : 0
 
 						// Reference point Y coordinate (straight line spacing)
 						// For even count: starts at spacing/2, increments by spacing
 						// T values go from high to low (T7=11, T8=9, ..., T12=1 for 6 speakers with 2m spacing)
-						const T_base = (n % 2 === 0) ? spacingM / 2 : 0
-						const T = T_base + ((n - 1 - i) * spacingM)
+						const T_base = n % 2 === 0 ? spacingM / 2 : 0
+						const T = T_base + (n - 1 - i) * spacingM
 
 						// Speaker angle (decreases from high to low: 66°, 54°, 42°, 30°, 18°, 6° for 60° arc)
-						const angleDeg = baseAngleDeg + ((n - 1 - i) * singleSplayDeg)
+						const angleDeg = baseAngleDeg + (n - 1 - i) * singleSplayDeg
 						const angleRad = (angleDeg * Math.PI) / 180
 
 						// Speaker position on arc (Cartesian coordinates)
@@ -878,6 +1117,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 					// Check if factory reset is enabled
 					const shouldReset = e.options.reset_array === true
+					const channelPrefix = String(e.options?.array_channel_prefix || '').trim()
+					const configuredChannels = []
 
 					const lines = []
 					for (let i = 0; i < n; i++) {
@@ -905,18 +1146,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						// Apply arc delay
 						const targetMs = roundTo01(offsetsMs[i])
 						self._setOutputDelayMs(ch, targetMs)
-
-						// Apply link group assignment if specified
-						const linkGroup = String(e.options?.array_link_group || '0')
-						if (linkGroup !== '0') {
-							const groupNum = Number(linkGroup)
-							if (groupNum >= 1 && groupNum <= 8) {
-								self._cmdSendLine(`/device/output/${ch}/output_link_group='${linkGroup}'`)
-								// Update local state
-								if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
-								self.outputLinkGroupAssign[ch] = groupNum
-							}
-						}
+						applyChannelName(ch, channelPrefix, `${i + 1}`)
+						configuredChannels.push(ch)
 
 						const spLabel =
 							speakerKey && speakerKey !== 'OFF'
@@ -925,25 +1156,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						lines.push(`Arc: ch ${ch} = ${targetMs.toFixed(2)} ms${spLabel}`)
 					}
 
-					// Apply link group bypass state if link group was assigned
-					const linkGroup = String(e.options?.array_link_group || '0')
-					if (linkGroup !== '0') {
-						const groupNum = Number(linkGroup)
-						if (groupNum >= 1 && groupNum <= 8) {
-							// Enable = not bypassed (false), Disable = bypassed (true)
-							const shouldBypass = e.options?.array_link_group_enable !== true
-							self._cmdSendLine(`/device/output_link_group/${groupNum}/bypass='${shouldBypass}'`)
-							// Update local state
-							if (!self.outputLinkGroupBypass) self.outputLinkGroupBypass = {}
-							self.outputLinkGroupBypass[groupNum] = shouldBypass
-							if (typeof self.checkFeedbacks === 'function') {
-								self.checkFeedbacks('output_link_group_bypassed')
-								self.checkFeedbacks('output_link_group_assigned')
-							}
-							const groupStatus = shouldBypass ? 'Disabled (Bypassed)' : 'Enabled'
-							lines.push(`Link Group ${groupNum}: ${groupStatus}`)
-						}
-					}
+					// Assign/enable or (for "None") unassign/disable the Output Link Group
+					lines.push(...applyLinkGroup(configuredChannels, e.options?.array_link_group))
 
 					self.log?.(
 						'info',
@@ -980,6 +1194,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 				const finalTypeId = String(typeId)
 				const shouldReset = e.options.reset_gradient === true
+				const channelPrefix = String(e.options?.gradient_channel_prefix || '').trim()
 				const lines = []
 
 				// Process Front outputs
@@ -1030,7 +1245,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						}
 					}
 
-					for (const ch of frontOutputs) {
+					for (let k = 0; k < frontOutputs.length; k++) {
+						const ch = frontOutputs[k]
 						// Apply factory reset if checkbox is enabled
 						if (shouldReset) {
 							for (const resetCmd of FACTORY_RESET_COMMANDS) {
@@ -1042,23 +1258,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						// Apply delay integration type
 						self._cmdSendLine(`/processing/output/${ch}/delay_integration/type=${finalTypeId}`)
 
+						// Optional channel naming
+						applyChannelName(ch, channelPrefix, frontOutputs.length > 1 ? `Front ${k + 1}` : 'Front')
+
 						// Apply starting point commands if any
 						if (frontCommands && Array.isArray(frontCommands)) {
 							for (const cmd of frontCommands) {
 								const finalCmd = cmd.replace(/\{ch\}/g, ch).replace(/\{\}/g, ch)
 								self._cmdSendLine(finalCmd)
-							}
-						}
-
-						// Apply link group assignment if specified
-						const linkGroup = String(e.options?.gradient_link_group || '0')
-						if (linkGroup !== '0') {
-							const groupNum = Number(linkGroup)
-							if (groupNum >= 1 && groupNum <= 8) {
-								self._cmdSendLine(`/device/output/${ch}/output_link_group='${linkGroup}'`)
-								// Update local state
-								if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
-								self.outputLinkGroupAssign[ch] = groupNum
 							}
 						}
 
@@ -1080,7 +1287,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						}
 					}
 
-					for (const ch of reversedOutputs) {
+					for (let k = 0; k < reversedOutputs.length; k++) {
+						const ch = reversedOutputs[k]
 						// Apply factory reset if checkbox is enabled
 						if (shouldReset) {
 							for (const resetCmd of FACTORY_RESET_COMMANDS) {
@@ -1092,6 +1300,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						// Apply delay integration type
 						self._cmdSendLine(`/processing/output/${ch}/delay_integration/type=${finalTypeId}`)
 
+						// Optional channel naming
+						applyChannelName(ch, channelPrefix, reversedOutputs.length > 1 ? `Reversed ${k + 1}` : 'Reversed')
+
 						// Apply starting point commands if any
 						if (reversedCommands && Array.isArray(reversedCommands)) {
 							for (const cmd of reversedCommands) {
@@ -1100,47 +1311,226 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							}
 						}
 
-						// Apply link group assignment if specified
-						const linkGroup = String(e.options?.gradient_link_group || '0')
-						if (linkGroup !== '0') {
-							const groupNum = Number(linkGroup)
-							if (groupNum >= 1 && groupNum <= 8) {
-								self._cmdSendLine(`/device/output/${ch}/output_link_group='${linkGroup}'`)
-								// Update local state
-								if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
-								self.outputLinkGroupAssign[ch] = groupNum
-							}
-						}
-
 						const spLabel = reversedTitle ? ` (${reversedTitle})` : ''
 						lines.push(`Reversed ch ${ch}${spLabel}`)
 					}
 				}
 
-				// Apply link group bypass state if link group was assigned
-				const linkGroup = String(e.options?.gradient_link_group || '0')
-				if (linkGroup !== '0') {
-					const groupNum = Number(linkGroup)
-					if (groupNum >= 1 && groupNum <= 8) {
-						// Enable = not bypassed (false), Disable = bypassed (true)
-						const shouldBypass = e.options?.gradient_link_group_enable !== true
-						self._cmdSendLine(`/device/output_link_group/${groupNum}/bypass='${shouldBypass}'`)
-						// Update local state
-						if (!self.outputLinkGroupBypass) self.outputLinkGroupBypass = {}
-						self.outputLinkGroupBypass[groupNum] = shouldBypass
-						if (typeof self.checkFeedbacks === 'function') {
-							self.checkFeedbacks('output_link_group_bypassed')
-							self.checkFeedbacks('output_link_group_assigned')
-						}
-						const groupStatus = shouldBypass ? 'Disabled (Bypassed)' : 'Enabled'
-						lines.push(`Link Group ${groupNum}: ${groupStatus}`)
-					}
-				}
+				// Assign/enable or (for "None") unassign/disable the Output Link Group
+				lines.push(...applyLinkGroup([...frontOutputs, ...reversedOutputs], e.options?.gradient_link_group))
 
 				if (lines.length > 0) {
 					self.log?.('info', [`Gradient: ${speakerKey} (type ${finalTypeId})`, ...lines].join(' | '))
 				} else {
 					self.log?.('warn', 'No outputs selected for Gradient mode')
+				}
+			} else if (mode === 'endfire_gradient') {
+				// Execute End-Fire Gradient logic: a cardioid gradient pair (front-facing +
+				// reversed rear-facing) with the end-fire steering delay summed onto the rear.
+				const speakerKey = String(e.options?.eg_speaker || '')
+				if (!speakerKey || speakerKey === 'OFF' || speakerKey === '') {
+					self.log?.('warn', 'Please select a loudspeaker for End-Fire Gradient mode')
+					return
+				}
+
+				// Delay integration type from the selected Phase Curve (PC63/PC100/PC125), falling
+				// back to the first available phase if none/invalid is chosen.
+				let typeId = null
+				const speakerEntry = productIntegrationSpeakers.get(speakerKey)
+				if (speakerEntry?.phases?.length > 0) {
+					const phaseOptionId = egSpeakerPhaseOption.get(speakerKey)
+					const selectedPhaseId = phaseOptionId ? String(e.options?.[phaseOptionId] || '').trim() : ''
+					const phase = speakerEntry.phases.find((p) => p.id === selectedPhaseId) || speakerEntry.phases[0]
+					typeId = phase?.typeId ?? null
+				}
+				if (!typeId) {
+					self.log?.('warn', `Invalid product integration selection for speaker ${speakerKey}`)
+					return
+				}
+				const finalTypeId = String(typeId)
+
+				// End-fire delay from target frequency + speed of sound (quarter-wavelength tap)
+				const f = Math.max(1e-6, Number(e.options.freq_eg) || 80)
+				const unitIn = e.options.tempUnit_eg === 'F' ? 'F' : 'C'
+				let T = Number.isFinite(Number(e.options.temp_eg)) ? Number(e.options.temp_eg) : 20
+				if (unitIn === 'F') T = ((T - 32) * 5) / 9
+				const c = speedOfSound_mps(T)
+
+				const spacing_m = c / (4 * f)
+				self._subassist = { spacing_m, T, c }
+				self.setVariableValues?.({
+					subassist_spacing_ft: (spacing_m * 3.28084).toFixed(2),
+					subassist_spacing_m: spacing_m.toFixed(3),
+				})
+				try {
+					self.updateActions?.()
+				} catch {}
+
+				const roundTo01 = (val) => Math.round(val / 0.01) * 0.01
+				const perTapMs = roundTo01(1000 / (4 * f))
+				const endfireSamples = Math.round(perTapMs * 96)
+
+				// Auto-detect Front Facing / Rear Facing starting points by title
+				const spEntries = productIntegrationStartingPoints.get(speakerKey) || []
+				const frontEntry = spEntries.find((sp) => isFrontFacingTitle(sp.title))
+				const rearEntry = spEntries.find((sp) => isRearFacingTitle(sp.title))
+				if (!frontEntry) {
+					self.log?.(
+						'warn',
+						`Loudspeaker ${speakerKey} has no Front Facing starting point required for End-Fire Gradient`,
+					)
+					return
+				}
+
+				// The Rear Facing starting point bakes in a cabinet-specific gradient delay
+				// (e.g. /processing/output/{}/delay='365'). Parse it so we can sum it with the
+				// end-fire delay rather than letting one overwrite the other.
+				const parseDelaySamples = (controlPoints) => {
+					for (const cp of controlPoints || []) {
+						const m = String(cp).match(/\/delay=['"]?(-?\d+(?:\.\d+)?)['"]?/)
+						if (m) return Math.round(Number(m[1]))
+					}
+					return 0
+				}
+				const withoutDelay = (controlPoints) => (controlPoints || []).filter((cp) => !/\/delay=/.test(String(cp)))
+
+				// Resolve the rear-facing treatment. When the loudspeaker has a factory Rear Facing
+				// preset we use its filters + baked-in cabinet delay. Otherwise we synthesize the rear
+				// from the front-facing filters, reverse polarity automatically, and use a user-typed delay.
+				let rearControlPoints
+				let cabinetSamples
+				let rearLabel
+				if (rearEntry) {
+					rearControlPoints = withoutDelay(rearEntry.controlPoints)
+					cabinetSamples = parseDelaySamples(rearEntry.controlPoints)
+					rearLabel = rearEntry.title
+				} else {
+					const manualMs = Math.max(0, Number(e.options.eg_manual_rear_delay_ms) || 0)
+					cabinetSamples = Math.round(manualMs * 96)
+					rearControlPoints = withoutDelay(frontEntry.controlPoints)
+					rearLabel = `${frontEntry.title} + reversed polarity (manual ${manualMs.toFixed(2)} ms)`
+					self.log?.(
+						'warn',
+						`Loudspeaker ${speakerKey} has no factory Rear Facing preset — using manual rear delay ${manualMs.toFixed(2)} ms and reversing polarity automatically on the negative outputs.`,
+					)
+				}
+				// Make sure the rear outputs end up polarity-reversed even when synthesized.
+				const rearHasPolarity = rearControlPoints.some((cp) => /polarity_reversal/.test(String(cp)))
+
+				const depth = Math.min(EG_MAX_TAPS, Math.max(1, Number(e.options.eg_depth) || 2))
+				const firstFront = Math.max(1, Math.min(NUM_OUTPUTS, Math.round(Number(e.options.eg_first_front) || 1)))
+				const firstRear = Math.max(1, Math.min(NUM_OUTPUTS, Math.round(Number(e.options.eg_first_rear) || 2)))
+
+				// Auto-fill one front + one rear channel per tap from the two first outputs. Adjacent
+				// first outputs (gap 1) interleave the pairs (stride 2: 1,3,5… / 2,4,6…); a larger gap
+				// lays them out as consecutive blocks (stride 1: 1–N front / Rf–Rf+N-1 rear).
+				const gap = firstRear - firstFront
+				const stride = gap === 1 ? 2 : 1
+				const taps = []
+				for (let t = 0; t < depth; t++) {
+					taps.push({ front: firstFront + t * stride, rear: firstRear + t * stride })
+				}
+
+				const inRange = (ch) => Number.isFinite(ch) && ch >= 1 && ch <= NUM_OUTPUTS
+
+				// Warn on computed channels that fall outside the device or collide between roles
+				const oob = new Set()
+				const dupes = new Set()
+				const usedRole = new Map()
+				for (const { front, rear } of taps) {
+					for (const ch of [front, rear]) {
+						if (!inRange(ch)) {
+							oob.add(ch)
+							continue
+						}
+						if (usedRole.has(ch)) dupes.add(ch)
+						else usedRole.set(ch, true)
+					}
+				}
+				if (oob.size > 0) {
+					self.log?.(
+						'warn',
+						`End-Fire Gradient: computed outputs ${[...oob].sort((a, b) => a - b).join(', ')} fall outside 1–${NUM_OUTPUTS} and will be skipped — lower the tap count or first outputs.`,
+					)
+				}
+				if (dupes.size > 0) {
+					self.log?.(
+						'warn',
+						`End-Fire Gradient: outputs ${[...dupes].sort((a, b) => a - b).join(', ')} collide between front and rear — increase the gap between the first outputs or reduce the tap count.`,
+					)
+				}
+
+				const shouldReset = e.options.reset_eg === true
+				const resetIfNeeded = (ch) => {
+					if (shouldReset) {
+						for (const resetCmd of FACTORY_RESET_COMMANDS) self._cmdSendLine(resetCmd.replace(/\{ch\}/g, ch))
+					}
+				}
+
+				// Optional channel naming: "<prefix> T# Front" / "<prefix> T# Rear"
+				const channelPrefix = String(e.options?.eg_channel_prefix || '').trim()
+
+				const configuredChannels = []
+				const lines = []
+				const frontFilterCmds = withoutDelay(frontEntry.controlPoints)
+
+				for (let t = 0; t < depth; t++) {
+					// End-fire steering delay for this tap (T0 = 0, each deeper tap one step more)
+					const tapEndfireSamples = t * endfireSamples
+					const tapEndfireMs = tapEndfireSamples / 96
+					const fch = taps[t].front
+					const rch = taps[t].rear
+
+					// Front-facing output: front filters, end-fire delay only (no gradient delay)
+					if (inRange(fch)) {
+						resetIfNeeded(fch)
+						self._cmdSendLine(`/processing/output/${fch}/delay_integration/type=${finalTypeId}`)
+						for (const cmd of frontFilterCmds) {
+							self._cmdSendLine(cmd.replace(/\{ch\}/g, fch).replace(/\{\}/g, fch))
+						}
+						self._cmdSendLine(`/processing/output/${fch}/delay=${tapEndfireSamples}`)
+						self._applyOutputDelay(fch, tapEndfireSamples)
+						applyChannelName(fch, channelPrefix, `T${t} Front`)
+						configuredChannels.push(fch)
+						lines.push(`T${t} front ch ${fch} = ${tapEndfireMs.toFixed(2)} ms (${frontEntry.title})`)
+					}
+
+					// Rear-facing output: rear filters + polarity, gradient delay + end-fire delay summed
+					const rearSamples = cabinetSamples + tapEndfireSamples
+					const rearMs = rearSamples / 96
+					if (inRange(rch)) {
+						resetIfNeeded(rch)
+						self._cmdSendLine(`/processing/output/${rch}/delay_integration/type=${finalTypeId}`)
+						for (const cmd of rearControlPoints) {
+							self._cmdSendLine(cmd.replace(/\{ch\}/g, rch).replace(/\{\}/g, rch))
+						}
+						if (!rearHasPolarity) {
+							self._cmdSendLine(`/processing/output/${rch}/polarity_reversal='true'`)
+						}
+						self._cmdSendLine(`/processing/output/${rch}/delay=${rearSamples}`)
+						self._applyOutputDelay(rch, rearSamples)
+						applyChannelName(rch, channelPrefix, `T${t} Rear`)
+						configuredChannels.push(rch)
+						lines.push(
+							`T${t} rear ch ${rch} = ${rearMs.toFixed(2)} ms (cabinet ${(cabinetSamples / 96).toFixed(2)} + EF ${tapEndfireMs.toFixed(2)}) (${rearLabel})`,
+						)
+					}
+				}
+
+				// Assign/enable or (for "None") unassign/disable the Output Link Group
+				lines.push(...applyLinkGroup(configuredChannels, e.options?.eg_link_group))
+
+				if (lines.length > 0) {
+					const c_fps = c * 3.28084
+					self.log?.(
+						'info',
+						[
+							`End-Fire Gradient: ${speakerKey} (type ${finalTypeId}) | f=${f} Hz, T=${e.options.temp_eg}°${unitIn} (~${T.toFixed(1)}°C, c~${c.toFixed(1)} m/s ~ ${c_fps.toFixed(1)} ft/s) | EF tap~${perTapMs.toFixed(2)} ms, cabinet ${cabinetSamples} smp`,
+							...lines,
+						].join(' | '),
+					)
+				} else {
+					self.log?.('warn', 'No outputs selected for End-Fire Gradient mode')
 				}
 			} else if (mode === 'array_endfire') {
 				// Execute Array End-Fire logic (combines end-fire and array)
@@ -1206,16 +1596,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						const AcC_virtual = -spacingM / singleSplayRad // Virtual acoustic center (negative radius)
 
 						// Base angle offset for even/odd speaker count
-						const baseAngleDeg = (numSubs % 2 === 0) ? singleSplayDeg / 2 : 0
+						const baseAngleDeg = numSubs % 2 === 0 ? singleSplayDeg / 2 : 0
 
 						// Reference point Y coordinate (straight line spacing)
 						// For even count: starts at spacing/2, increments by spacing
 						// T values go from high to low (T7=11, T8=9, ..., T12=1 for 6 speakers with 2m spacing)
-						const T_base = (numSubs % 2 === 0) ? spacingM / 2 : 0
-						const T = T_base + ((numSubs - 1 - i) * spacingM)
+						const T_base = numSubs % 2 === 0 ? spacingM / 2 : 0
+						const T = T_base + (numSubs - 1 - i) * spacingM
 
 						// Speaker angle (decreases from high to low: 66°, 54°, 42°, 30°, 18°, 6° for 60° arc)
-						const angleDeg = baseAngleDeg + ((numSubs - 1 - i) * singleSplayDeg)
+						const angleDeg = baseAngleDeg + (numSubs - 1 - i) * singleSplayDeg
 						const angleRad = (angleDeg * Math.PI) / 180
 
 						// Speaker position on arc (Cartesian coordinates)
@@ -1276,6 +1666,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 					// Check if factory reset is enabled
 					const shouldReset = o.reset_arrayendfire === true
+					const channelPrefix = String(o?.arrayendfire_channel_prefix || '').trim()
+					const configuredChannels = []
 
 					const lines = []
 
@@ -1318,18 +1710,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 							// Apply combined delay
 							self._setOutputDelayMs(ch, combinedMs)
-
-							// Apply link group assignment if specified
-							const linkGroup = String(o?.arrayendfire_link_group || '0')
-							if (linkGroup !== '0') {
-								const groupNum = Number(linkGroup)
-								if (groupNum >= 1 && groupNum <= 8) {
-									self._cmdSendLine(`/device/output/${ch}/output_link_group='${linkGroup}'`)
-									// Update local state
-									if (!self.outputLinkGroupAssign) self.outputLinkGroupAssign = {}
-									self.outputLinkGroupAssign[ch] = groupNum
-								}
-							}
+							const rowNm = rowLabels[rowIdx].charAt(0).toUpperCase() + rowLabels[rowIdx].slice(1)
+							applyChannelName(ch, channelPrefix, `${rowNm} ${subIdx + 1}`)
+							configuredChannels.push(ch)
 
 							const spLabel =
 								speakerKey && speakerKey !== 'OFF'
@@ -1342,25 +1725,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						}
 					}
 
-					// Apply link group bypass state if link group was assigned
-					const linkGroup = String(o?.arrayendfire_link_group || '0')
-					if (linkGroup !== '0') {
-						const groupNum = Number(linkGroup)
-						if (groupNum >= 1 && groupNum <= 8) {
-							// Enable = not bypassed (false), Disable = bypassed (true)
-							const shouldBypass = o?.arrayendfire_link_group_enable !== true
-							self._cmdSendLine(`/device/output_link_group/${groupNum}/bypass='${shouldBypass}'`)
-							// Update local state
-							if (!self.outputLinkGroupBypass) self.outputLinkGroupBypass = {}
-							self.outputLinkGroupBypass[groupNum] = shouldBypass
-							if (typeof self.checkFeedbacks === 'function') {
-								self.checkFeedbacks('output_link_group_bypassed')
-								self.checkFeedbacks('output_link_group_assigned')
-							}
-							const groupStatus = shouldBypass ? 'Disabled (Bypassed)' : 'Enabled'
-							lines.push(`Link Group ${groupNum}: ${groupStatus}`)
-						}
-					}
+					// Assign/enable or (for "None") unassign/disable the Output Link Group
+					lines.push(...applyLinkGroup(configuredChannels, o?.arrayendfire_link_group))
 
 					if (lines.length) {
 						const c_fps = c * 3.28084
