@@ -689,7 +689,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'gradient',
 			},
 			...gradientPhaseOptionDefs,
-			...gradientStartingPointOptionDefs_Front,
 			{
 				type: 'multidropdown',
 				id: 'gradient_outputs_front',
@@ -699,7 +698,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				minSelection: 0,
 				isVisible: (o) => o.mode === 'gradient',
 			},
-			...gradientStartingPointOptionDefs_Reversed,
 			{
 				type: 'multidropdown',
 				id: 'gradient_outputs_reversed',
@@ -1169,25 +1167,19 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				const channelPrefix = String(e.options?.gradient_channel_prefix || '').trim()
 				const lines = []
 
-				// Process Front outputs
-				const frontOptionId = gradientSpeakerStartingPointOption_Front.get(speakerKey)
-				let frontStartingPointId = ''
-				if (frontOptionId) {
-					frontStartingPointId = String(e.options?.[frontOptionId] || '').trim()
-				}
+				// Auto-detect the Front Facing / Rear Facing starting points by title — front goes to
+				// the front outputs, rear (polarity + cabinet delay) to the reversed outputs.
+				const spEntries = productIntegrationStartingPoints.get(speakerKey) || []
+				const frontEntry = spEntries.find((sp) => isFrontFacingTitle(sp.title))
+				const rearEntry = spEntries.find((sp) => isRearFacingTitle(sp.title))
 
+				// Process Front outputs
 				const frontOutputsRaw = e.options.gradient_outputs_front
 				const frontOutputs = Array.isArray(frontOutputsRaw)
 					? frontOutputsRaw.map(Number).filter((ch) => Number.isFinite(ch) && ch >= 1 && ch <= NUM_OUTPUTS)
 					: []
 
 				// Process Reversed outputs
-				const reversedOptionId = gradientSpeakerStartingPointOption_Reversed.get(speakerKey)
-				let reversedStartingPointId = ''
-				if (reversedOptionId) {
-					reversedStartingPointId = String(e.options?.[reversedOptionId] || '').trim()
-				}
-
 				const reversedOutputsRaw = e.options.gradient_outputs_reversed
 				const reversedOutputs = Array.isArray(reversedOutputsRaw)
 					? reversedOutputsRaw.map(Number).filter((ch) => Number.isFinite(ch) && ch >= 1 && ch <= NUM_OUTPUTS)
@@ -1205,17 +1197,11 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				}
 
 				if (frontOutputs.length > 0) {
-					let frontCommands = null
-					let frontTitle = ''
-
-					if (frontStartingPointId) {
-						const entries = productIntegrationStartingPoints.get(speakerKey) || []
-						const entry = entries.find((sp) => sp.id === frontStartingPointId)
-						if (entry && Array.isArray(entry.controlPoints) && entry.controlPoints.length > 0) {
-							frontCommands = entry.controlPoints
-							frontTitle = entry.title || ''
-						}
-					}
+					const frontCommands =
+						frontEntry && Array.isArray(frontEntry.controlPoints) && frontEntry.controlPoints.length > 0
+							? frontEntry.controlPoints
+							: null
+					const frontTitle = frontCommands ? frontEntry.title || '' : ''
 
 					for (let k = 0; k < frontOutputs.length; k++) {
 						const ch = frontOutputs[k]
@@ -1247,16 +1233,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				}
 
 				if (reversedOutputs.length > 0) {
-					let reversedCommands = null
-					let reversedTitle = ''
-
-					if (reversedStartingPointId) {
-						const entries = productIntegrationStartingPoints.get(speakerKey) || []
-						const entry = entries.find((sp) => sp.id === reversedStartingPointId)
-						if (entry && Array.isArray(entry.controlPoints) && entry.controlPoints.length > 0) {
-							reversedCommands = entry.controlPoints
-							reversedTitle = entry.title || ''
-						}
+					const reversedCommands =
+						rearEntry && Array.isArray(rearEntry.controlPoints) && rearEntry.controlPoints.length > 0
+							? rearEntry.controlPoints
+							: null
+					const reversedTitle = reversedCommands ? rearEntry.title || '' : ''
+					if (!reversedCommands) {
+						self.log?.(
+							'warn',
+							`Loudspeaker ${speakerKey} has no factory Rear Facing preset — reversed outputs get the delay-integration type only (no polarity/cabinet delay).`,
+						)
 					}
 
 					for (let k = 0; k < reversedOutputs.length; k++) {
