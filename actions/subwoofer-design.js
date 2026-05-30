@@ -94,12 +94,12 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 	const outputChoices = buildOutputChoices(self, NUM_OUTPUTS)
 	const outputChoicesFriendly = outputChoices
 
-	// Optional channel naming shared by every mode: when a prefix is set, name an output
-	// "<prefix> <suffix>" and mirror it into local state + the output_<ch>_name variable.
+	// Channel naming shared by every mode: with a prefix, name an output "<prefix> <suffix>";
+	// with an empty prefix, revert to the device default "Output <ch>". Mirrors into local
+	// state + the output_<ch>_name variable.
 	const applyChannelName = (ch, prefix, suffix) => {
 		const p = String(prefix || '').trim()
-		if (!p) return
-		const channelName = suffix ? `${p} ${suffix}` : p
+		const channelName = p ? (suffix ? `${p} ${suffix}` : p) : `Output ${ch}`
 		self._cmdSendLine(`/device/output/${ch}/name='${channelName}'`)
 		if (!self.outputName) self.outputName = {}
 		self.outputName[ch] = channelName
