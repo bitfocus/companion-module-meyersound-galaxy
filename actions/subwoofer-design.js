@@ -175,47 +175,73 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		`return !!options && options.mode === 'endfire_gradient' && ${noRearFacingJson}.includes(options.eg_speaker)`,
 	)
 
-	// Phase Curve (PC63 / PC100 / PC125) option defs for End-Fire Gradient, grouped by the set of
-	// phases a loudspeaker offers so speakers with identical choices share one dropdown. The selected
-	// phase resolves to the delay_integration type id applied to that speaker's outputs.
-	const egPhaseGroups = new Map() // comboKey -> { choices, defaultId, speakers[] }
-	for (const speaker of productIntegrationSpeakers.values()) {
-		if (speaker.key === 'OFF' || !Array.isArray(speaker.phases) || speaker.phases.length === 0) continue
-		const comboKey = speaker.phases
-			.map((p) => p.id)
-			.sort((a, b) => a.localeCompare(b))
-			.join('|')
-		let group = egPhaseGroups.get(comboKey)
-		if (!group) {
-			group = {
-				choices: speaker.phases.map((p) => ({ id: p.id, label: p.label })),
-				defaultId: speaker.phases[0].id,
-				speakers: [],
+	// Speaker keys with no Front Facing preset (End-Fire auto-applies front-facing processing).
+	const noFrontFacingSpeakers = []
+	for (const [key, entries] of productIntegrationStartingPoints.entries()) {
+		if (!Array.isArray(entries)) continue
+		if (!entries.some((e) => isFrontFacingTitle(e.title))) noFrontFacingSpeakers.push(key)
+	}
+	const noFrontFacingJson = JSON.stringify(noFrontFacingSpeakers)
+	const endfireNoFrontVisible = new Function(
+		'options',
+		`return !!options && options.mode === 'endfire' && ${noFrontFacingJson}.includes(options.endfire_speaker)`,
+	)
+
+	// Phase Curve (PC63 / PC100 / PC125) option defs, grouped by the set of phases a loudspeaker
+	// offers so speakers with identical choices share one dropdown. The selected phase resolves to
+	// the delay_integration type id applied to that speaker's outputs. Built per mode because the
+	// isVisible (mode + speaker option id) must be self-contained for Companion's serialization.
+	const buildPhaseDefs = (modeStr, speakerOptId, idPrefix) => {
+		const groups = new Map() // comboKey -> { choices, defaultId, speakers[] }
+		for (const speaker of productIntegrationSpeakers.values()) {
+			if (speaker.key === 'OFF' || !Array.isArray(speaker.phases) || speaker.phases.length === 0) continue
+			const comboKey = speaker.phases
+				.map((p) => p.id)
+				.sort((a, b) => a.localeCompare(b))
+				.join('|')
+			let group = groups.get(comboKey)
+			if (!group) {
+				group = {
+					choices: speaker.phases.map((p) => ({ id: p.id, label: p.label })),
+					defaultId: speaker.phases[0].id,
+					speakers: [],
+				}
+				groups.set(comboKey, group)
 			}
-			egPhaseGroups.set(comboKey, group)
+			group.speakers.push(speaker.key)
 		}
-		group.speakers.push(speaker.key)
+		const defs = []
+		const speakerPhaseOption = new Map() // speaker.key -> option id
+		let n = 0
+		for (const group of groups.values()) {
+			const optionId = `${idPrefix}${++n}`
+			const allowedJson = JSON.stringify(group.speakers)
+			const isVisible = new Function(
+				'options',
+				`return !!options && options.mode === '${modeStr}' && ${allowedJson}.includes(options.${speakerOptId})`,
+			)
+			defs.push({
+				type: 'dropdown',
+				id: optionId,
+				label: 'Phase Curve',
+				default: group.defaultId,
+				choices: group.choices,
+				isVisible,
+			})
+			for (const sp of group.speakers) speakerPhaseOption.set(sp, optionId)
+		}
+		return { defs, speakerPhaseOption }
 	}
-	const egPhaseOptionDefs = []
-	const egSpeakerPhaseOption = new Map() // speaker.key -> option id
-	let egPhaseCounter = 0
-	for (const group of egPhaseGroups.values()) {
-		const optionId = `eg_phase_${++egPhaseCounter}`
-		const allowedJson = JSON.stringify(group.speakers)
-		const isVisible = new Function(
-			'options',
-			`return !!options && options.mode === 'endfire_gradient' && ${allowedJson}.includes(options.eg_speaker)`,
-		)
-		egPhaseOptionDefs.push({
-			type: 'dropdown',
-			id: optionId,
-			label: 'Phase Curve',
-			default: group.defaultId,
-			choices: group.choices,
-			isVisible,
-		})
-		for (const sp of group.speakers) egSpeakerPhaseOption.set(sp, optionId)
-	}
+	const { defs: egPhaseOptionDefs, speakerPhaseOption: egSpeakerPhaseOption } = buildPhaseDefs(
+		'endfire_gradient',
+		'eg_speaker',
+		'eg_phase_',
+	)
+	const { defs: endfirePhaseOptionDefs, speakerPhaseOption: endfireSpeakerPhaseOption } = buildPhaseDefs(
+		'endfire',
+		'endfire_speaker',
+		'endfire_phase_',
+	)
 
 	actions['subassist_combined'] = {
 		name: 'Sub Design Assist',
@@ -243,7 +269,25 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: subwooferSpeakerChoices,
 				isVisible: (o) => o.mode === 'endfire',
 			},
-			...endfireStartingPointOptionDefs,
+			...endfirePhaseOptionDefs,
+			{
+				type: 'static-text',
+				id: 'endfire_no_front_warning',
+				label: 'No factory Front Facing preset',
+				value:
+					'This loudspeaker has no factory front-facing settings. Enter a base delay below — it is added on top of every end-fire tap.',
+				isVisible: endfireNoFrontVisible,
+			},
+			{
+				type: 'number',
+				id: 'endfire_manual_delay_ms',
+				label: 'Base delay (ms)',
+				default: 0,
+				min: 0,
+				max: 100,
+				step: 0.01,
+				isVisible: endfireNoFrontVisible,
+			},
 			{
 				type: 'checkbox',
 				id: 'reset_endfire',
@@ -313,76 +357,12 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'endfire',
 			},
 			{
-				type: 'multidropdown',
-				id: 't0',
-				label: 'T0 outputs (0 ms)',
-				default: [],
+				type: 'dropdown',
+				id: 'endfire_first_output',
+				label: 'First output',
+				default: '1',
 				choices: outputChoicesFriendly,
-				minSelection: 0,
-				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 1,
-			},
-			{
-				type: 'multidropdown',
-				id: 't1',
-				label: 'T1 outputs (1x delay)',
-				default: [],
-				choices: outputChoicesFriendly,
-				minSelection: 0,
-				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 2,
-			},
-			{
-				type: 'multidropdown',
-				id: 't2',
-				label: 'T2 outputs (2x delay)',
-				default: [],
-				choices: outputChoicesFriendly,
-				minSelection: 0,
-				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 3,
-			},
-			{
-				type: 'multidropdown',
-				id: 't3',
-				label: 'T3 outputs (3x delay)',
-				default: [],
-				choices: outputChoicesFriendly,
-				minSelection: 0,
-				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 4,
-			},
-			{
-				type: 'multidropdown',
-				id: 't4',
-				label: 'T4 outputs (4x delay)',
-				default: [],
-				choices: outputChoicesFriendly,
-				minSelection: 0,
-				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 5,
-			},
-			{
-				type: 'multidropdown',
-				id: 't5',
-				label: 'T5 outputs (5x delay)',
-				default: [],
-				choices: outputChoicesFriendly,
-				minSelection: 0,
-				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 6,
-			},
-			{
-				type: 'multidropdown',
-				id: 't6',
-				label: 'T6 outputs (6x delay)',
-				default: [],
-				choices: outputChoicesFriendly,
-				minSelection: 0,
-				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 7,
-			},
-			{
-				type: 'multidropdown',
-				id: 't7',
-				label: 'T7 outputs (7x delay)',
-				default: [],
-				choices: outputChoicesFriendly,
-				minSelection: 0,
-				isVisible: (o) => o.mode === 'endfire' && Number(o.depth) >= 8,
+				isVisible: (o) => o.mode === 'endfire',
 			},
 			{
 				type: 'textinput',
@@ -809,7 +789,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			{
 				type: 'static-text',
 				id: 'eg_spacing_preview',
-				label: 'Recommended front/rear spacing',
+				label: 'Recommended tap spacing (from target freq + temp)',
 				value: subassistPreview(self),
 				isVisible: (o) => o.mode === 'endfire_gradient',
 			},
@@ -901,41 +881,40 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				const perTapMs = roundTo01(1000 / (4 * f))
 				const perTapSamples = Math.round(perTapMs * 96)
 
-				const taps = []
-				for (let t = 0; t < depth; t++) {
-					const key = `t${t}`
-					const arr = Array.isArray(e.options[key])
-						? e.options[key].map(Number)
-						: e.options[key]
-							? [Number(e.options[key])]
-							: []
-					taps.push(arr.filter((ch) => Number.isFinite(ch) && ch >= 1 && ch <= NUM_OUTPUTS))
-				}
+				const firstOutput = Math.max(1, Math.min(NUM_OUTPUTS, Math.round(Number(e.options.endfire_first_output) || 1)))
 
-				// Get product integration settings if specified
+				// Resolve product integration: delay-integration type from the selected Phase Curve,
+				// and the auto-detected Front Facing starting point. Loudspeakers without a front
+				// preset fall back to a user-typed base delay added on top of every tap.
 				const speakerKey = String(e.options?.endfire_speaker || '')
 				let typeId = null
-				let startingPointCommands = null
-				let startingPointTitle = ''
+				let frontControlPoints = []
+				let baseSamples = 0
+				let frontLabel = ''
 
 				if (speakerKey && speakerKey !== 'OFF' && speakerKey !== '') {
 					const speakerEntry = productIntegrationSpeakers.get(speakerKey)
 					if (speakerEntry?.phases?.length > 0) {
-						const fallbackPhase = speakerEntry.phases[0]
-						typeId = fallbackPhase?.typeId ?? null
+						const phaseOptionId = endfireSpeakerPhaseOption.get(speakerKey)
+						const selectedPhaseId = phaseOptionId ? String(e.options?.[phaseOptionId] || '').trim() : ''
+						const phase = speakerEntry.phases.find((p) => p.id === selectedPhaseId) || speakerEntry.phases[0]
+						typeId = phase?.typeId ?? null
 					}
 
-					const startingPointOptionId = endfireSpeakerStartingPointOption.get(speakerKey)
-					if (startingPointOptionId) {
-						const startingPointId = String(e.options?.[startingPointOptionId] || '').trim()
-						if (startingPointId) {
-							const entries = productIntegrationStartingPoints.get(speakerKey) || []
-							const entry = entries.find((sp) => sp.id === startingPointId)
-							if (entry && Array.isArray(entry.controlPoints) && entry.controlPoints.length > 0) {
-								startingPointCommands = entry.controlPoints
-								startingPointTitle = entry.title || ''
-							}
-						}
+					const spEntries = productIntegrationStartingPoints.get(speakerKey) || []
+					const frontEntry = spEntries.find((sp) => isFrontFacingTitle(sp.title))
+					if (frontEntry) {
+						// Front Facing carries no cabinet delay — keep its filters, drop any delay line
+						frontControlPoints = (frontEntry.controlPoints || []).filter((cp) => !/\/delay=/.test(String(cp)))
+						frontLabel = frontEntry.title
+					} else {
+						const manualMs = Math.max(0, Number(e.options.endfire_manual_delay_ms) || 0)
+						baseSamples = Math.round(manualMs * 96)
+						frontLabel = `manual base delay ${manualMs.toFixed(2)} ms`
+						self.log?.(
+							'warn',
+							`Loudspeaker ${speakerKey} has no factory Front Facing preset — using manual base delay ${manualMs.toFixed(2)} ms.`,
+						)
 					}
 				}
 
@@ -945,43 +924,30 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				const configuredChannels = []
 
 				const lines = []
-				for (let t = 0; t < taps.length; t++) {
-					const targetSamples = t * perTapSamples
+				// One output per tap, auto-filled from the first output: T0 = first, T1 = first+1, …
+				for (let t = 0; t < depth; t++) {
+					const ch = firstOutput + t
+					if (ch > NUM_OUTPUTS) break
+					const targetSamples = baseSamples + t * perTapSamples
 					const targetMs = targetSamples / 96
-					for (let k = 0; k < taps[t].length; k++) {
-						const ch = taps[t][k]
-						const nameSuffix = taps[t].length > 1 ? `T${t} ${k + 1}` : `T${t}`
-						// Apply factory reset if checkbox is enabled
-						if (shouldReset) {
-							for (const resetCmd of FACTORY_RESET_COMMANDS) {
-								const cmd = resetCmd.replace(/\{ch\}/g, ch)
-								self._cmdSendLine(cmd)
-							}
-						}
 
-						// Apply product integration if specified
-						if (typeId) {
-							self._cmdSendLine(`/processing/output/${ch}/delay_integration/type=${typeId}`)
-						}
-						if (startingPointCommands && Array.isArray(startingPointCommands)) {
-							for (const cmd of startingPointCommands) {
-								const finalCmd = cmd.replace(/\{ch\}/g, ch).replace(/\{\}/g, ch)
-								self._cmdSendLine(finalCmd)
-							}
-						}
-
-						// Apply end-fire delay
-						self._cmdSendLine(`/processing/output/${ch}/delay=${targetSamples}`)
-						self._applyOutputDelay(ch, targetSamples)
-						applyChannelName(ch, channelPrefix, nameSuffix)
-						configuredChannels.push(ch)
-
-						const spLabel =
-							speakerKey && speakerKey !== 'OFF'
-								? ` [${speakerKey}${startingPointTitle ? ': ' + startingPointTitle : ''}]`
-								: ''
-						lines.push(`End-Fire T${t}: ch ${ch} = ${targetMs.toFixed(2)} ms${spLabel}`)
+					if (shouldReset) {
+						for (const resetCmd of FACTORY_RESET_COMMANDS) self._cmdSendLine(resetCmd.replace(/\{ch\}/g, ch))
 					}
+					if (typeId) {
+						self._cmdSendLine(`/processing/output/${ch}/delay_integration/type=${typeId}`)
+					}
+					for (const cmd of frontControlPoints) {
+						self._cmdSendLine(cmd.replace(/\{ch\}/g, ch).replace(/\{\}/g, ch))
+					}
+					self._cmdSendLine(`/processing/output/${ch}/delay=${targetSamples}`)
+					self._applyOutputDelay(ch, targetSamples)
+					applyChannelName(ch, channelPrefix, `T${t}`)
+					configuredChannels.push(ch)
+
+					const spLabel =
+						speakerKey && speakerKey !== 'OFF' ? ` [${speakerKey}${frontLabel ? ': ' + frontLabel : ''}]` : ''
+					lines.push(`End-Fire T${t}: ch ${ch} = ${targetMs.toFixed(2)} ms${spLabel}`)
 				}
 
 				// Assign/enable or (for "None") unassign/disable the Output Link Group

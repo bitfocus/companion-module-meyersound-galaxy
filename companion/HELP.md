@@ -42,7 +42,7 @@ Configure multiple outputs for line array deployments with a single action:
 
 ### Subwoofer Design Assist
 Five deployment modes for subwoofer configurations:
-- **End-Fire** — Calculate and apply delay taps based on target frequency and air temperature. Supports 2–8 taps with recommended spacing preview.
+- **End-Fire** — Calculate and apply progressive delay taps based on target frequency and air temperature (2–8 taps, with recommended spacing preview). Pick a loudspeaker and its phase curve (PC63/PC100/PC125, as available); the Front Facing starting point is applied automatically. Choose the first output and the remaining taps auto-fill one output per tap (T0 = first, T1 = first+1, …). Loudspeakers without a front-facing preset accept a manual base delay added on top of every tap.
 - **Array** — Configure arc/curved arrays with delay timing based on sub spacing, arc angle, and temperature. Automatic symmetric delay calculation.
 - **Array End-Fire** — Combines end-fire rows with arc configuration for multi-row deployments.
 - **Gradient** — Apply gradient subwoofer presets with front and reversed polarity outputs.
