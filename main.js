@@ -171,6 +171,7 @@ class ModuleInstance extends InstanceBase {
 
 		// cross-instance link bus (mirror commands to connections sharing a Link ID)
 		this._linkBus = null
+		this._linkActive = true // runtime toggle; false = temporarily isolate this connection
 		this._originId = this.id || `lk-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
 
 		// state caches
@@ -332,6 +333,8 @@ class ModuleInstance extends InstanceBase {
 			onMessage: (line) => this._onLinkLine(line),
 		})
 		this._linkBus.setLinkId(this.config?.link_id || '')
+		this._linkActive = true
+		this.setVariableValues?.({ link_id: this.config?.link_id || '', link_active: 'true' })
 		if (this.config?.link_id) this._linkBus.start()
 
 		// Restore the saved label + last-known host/port for the picked
@@ -413,8 +416,10 @@ class ModuleInstance extends InstanceBase {
 		const newLinkId = config?.link_id || ''
 		if (newLinkId !== prevLinkId && this._linkBus) {
 			this._linkBus.setLinkId(newLinkId)
+			this._linkActive = true // re-link on id change
 			if (newLinkId) this._linkBus.start()
 			else this._linkBus.stop()
+			this.setVariableValues?.({ link_id: newLinkId, link_active: 'true' })
 		}
 
 		this.updateActions()
@@ -1367,22 +1372,29 @@ class ModuleInstance extends InstanceBase {
 	_cmdSendLine(line, opts) {
 		this.cmdQueue.push(line)
 		this._cmdFlush()
-		// Mirror to linked instances unless opted out, or unless this line was itself a replay.
-		if (!opts || (!opts.noLink && !opts._fromLink)) this._linkBus?.send(line)
+		// Mirror to linked instances unless linking is suspended, opted out, or this is a replay.
+		if (this._linkActive && (!opts || (!opts.noLink && !opts._fromLink))) this._linkBus?.send(line)
 	}
 	_cmdSendBatch(lines, opts) {
 		if (lines?.length) {
 			this.cmdQueue.push(...lines)
 			this._cmdFlush()
-			if (!opts || !opts.noLink) {
+			if (this._linkActive && (!opts || !opts.noLink)) {
 				for (const l of lines) this._linkBus?.send(l)
 			}
 		}
 	}
 	// A command line received from a linked peer: replay locally, never re-broadcast (loop-safe).
 	_onLinkLine(line) {
-		if (this._destroyed) return
+		if (this._destroyed || !this._linkActive) return
 		this._cmdSendLine(line, { _fromLink: true })
+	}
+	// Runtime enable/disable of this connection's linking (does not change the configured Link ID).
+	_setLinkActive(state) {
+		this._linkActive = !!state
+		this.setVariableValues?.({ link_active: this._linkActive ? 'true' : 'false' })
+		if (typeof this.checkFeedbacks === 'function') this.checkFeedbacks('linking_active')
+		this.log?.('info', `Linking ${this._linkActive ? 'enabled' : 'suspended'} for this connection`)
 	}
 
 	_cmdFlush() {

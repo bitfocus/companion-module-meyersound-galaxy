@@ -497,6 +497,42 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	}
 
 	// =========================
+	// ===== LINKING ===========
+	// =========================
+	actions['link_set'] = {
+		name: 'Linking: Enable / Disable (this connection)',
+		options: [
+			{
+				type: 'dropdown',
+				id: 'op',
+				label: 'Operation',
+				default: 'toggle',
+				choices: [
+					{ id: 'on', label: 'Enable linking' },
+					{ id: 'off', label: 'Disable linking (isolate this Galaxy)' },
+					{ id: 'toggle', label: 'Toggle' },
+				],
+			},
+			{
+				type: 'static-text',
+				id: 'link_note',
+				label: '',
+				value:
+					'Temporarily suspends or resumes mirroring for THIS connection only, so you can ' +
+					'control this Galaxy without affecting its Link ID group. While disabled, this ' +
+					'connection neither sends nor applies mirrored commands. Resets to enabled on ' +
+					'restart or when the Link ID changes. Requires a Link ID set in the connection config.',
+			},
+		],
+		callback: (e) => {
+			if (!self || typeof self._setLinkActive !== 'function') return
+			const op = e.options.op
+			const next = op === 'toggle' ? self._linkActive === false : op === 'on'
+			self._setLinkActive(next)
+		},
+	}
+
+	// =========================
 	// ===== IDENTIFY ==========
 	// =========================
 

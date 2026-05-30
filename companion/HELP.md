@@ -86,6 +86,8 @@ All modes support loudspeaker selection for product integration, starting points
 ### Linking Galaxies (Link ID)
 Give two or more connections on the same Companion server the same non-empty **Link ID** (in the connection config) to operate them as one. Any control change you make through a Companion action on one linked Galaxy is automatically replayed on the others — e.g. muting "Galaxy Left" also mutes "Galaxy Right". Leave the Link ID blank to disable linking. Per-unit/identity actions (Identify, Access Lock, Front Panel Lockout, Reboot, Group Name, Clear Log) are intentionally not mirrored. Linking covers connections on the same machine; changes made directly on a device's front panel are not mirrored.
 
+Use the **Linking: Enable / Disable** action to temporarily suspend mirroring for one connection — handy when you need to adjust a single Galaxy without affecting its linked peers. The `link_active` variable and the **Linking: Active** feedback show the current state; it resets to enabled on restart or when the Link ID changes.
+
 ### Front Panel Lockout
 - Lock/unlock Galaxy hardware front panel
 - Feedback shows live state

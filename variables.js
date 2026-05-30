@@ -598,6 +598,12 @@ module.exports = function UpdateVariableDefinitions(self, NUM_INPUTS, NUM_OUTPUT
 		vals['access_privilege'] = String(self.accessPrivilege)
 	}
 
+	// ===== Cross-instance linking =====
+	vars.push({ variableId: 'link_id', name: 'Link ID' })
+	vars.push({ variableId: 'link_active', name: 'Linking active (true/false)' })
+	vals['link_id'] = String(self?.config?.link_id || '')
+	vals['link_active'] = self?._linkActive === false ? 'false' : 'true'
+
 	// ===== Sub Assist preview =====
 	vars.push({ variableId: 'subassist_spacing_ft', name: 'Subassist spacing (ft)' })
 	vars.push({ variableId: 'subassist_spacing_m', name: 'Subassist spacing (m)' })

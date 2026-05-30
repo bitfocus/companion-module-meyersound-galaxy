@@ -1500,5 +1500,15 @@ module.exports = function UpdateFeedbacks(self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
+	// ==== FEEDBACK: Linking active
+	feedbacks['linking_active'] = {
+		type: 'boolean',
+		name: 'Linking: Active',
+		description: 'True when this connection is mirroring to/from its Link ID group (not suspended)',
+		defaultStyle: { color: 0x000000, bgcolor: 0x00c800 },
+		options: [],
+		callback: () => self?._linkActive !== false,
+	}
+
 	self.setFeedbackDefinitions(feedbacks)
 }
