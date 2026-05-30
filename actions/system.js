@@ -41,7 +41,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		callback: (e) => {
 			if (!self) return
 			const groupName = String(e.options.group_name || '')
-			self._cmdSendLine(`/entity/group_name='${groupName}'`)
+			self._cmdSendLine(`/entity/group_name='${groupName}'`, { noLink: true })
 			self.log?.('info', `Set group name to: ${groupName}`)
 		},
 	}
@@ -348,7 +348,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			}
 
 			try {
-				self._cmdSendLine(`/system/access/1/privilege=${total.toString()}`)
+				self._cmdSendLine(`/system/access/1/privilege=${total.toString()}`, { noLink: true })
 				self.accessPrivilege = total
 				if (typeof self.setVariableValues === 'function') {
 					self.setVariableValues({ access_privilege: total.toString() })
@@ -395,7 +395,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				const next = now ^ bit
 
 				if (typeof self._cmdSendLine === 'function') {
-					self._cmdSendLine(`/system/access/1/privilege=${next.toString()}`)
+					self._cmdSendLine(`/system/access/1/privilege=${next.toString()}`, { noLink: true })
 				}
 				self.accessPrivilege = next
 				if (typeof self.setVariableValues === 'function') {
@@ -488,11 +488,11 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			if (op === 'toggle') {
 				const cur = self?.miscValues?.front_panel_lockout
 				const curBool = typeof cur === 'boolean' ? cur : /^(true|1|on)$/i.test(String(nn(cur, '')).trim())
-				self._cmdSendLine(`/system/hardware/front_panel_lockout=${curBool ? 'false' : 'true'}`)
+				self._cmdSendLine(`/system/hardware/front_panel_lockout=${curBool ? 'false' : 'true'}`, { noLink: true })
 				return
 			}
 			const state = op === 'on'
-			self._cmdSendLine(`/system/hardware/front_panel_lockout=${state ? 'true' : 'false'}`)
+			self._cmdSendLine(`/system/hardware/front_panel_lockout=${state ? 'true' : 'false'}`, { noLink: true })
 		},
 	}
 
@@ -527,7 +527,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			else if (op === 'off') nextState = false
 			else nextState = !curBool
 
-			self._cmdSendLine(`/status/identify_active=${nextState ? 'true' : 'false'}`)
+			self._cmdSendLine(`/status/identify_active=${nextState ? 'true' : 'false'}`, { noLink: true })
 			self.miscValues = self.miscValues || {}
 			self.miscValues.identify_active = nextState
 			if (typeof self.setVariableValues === 'function') {
@@ -612,7 +612,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		options: [],
 		callback: () => {
 			if (!self || typeof self._cmdSendLine !== 'function') return
-			self._cmdSendLine(':clear_log_history')
+			self._cmdSendLine(':clear_log_history', { noLink: true })
 			self.log?.('info', 'Galaxy log history cleared')
 		},
 	}
@@ -680,7 +680,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				self.log?.('warn', `Reboot skipped: invalid mode "${e.options.mode}"`)
 				return
 			}
-			self._cmdSendLine(`:reboot ${mode}`)
+			self._cmdSendLine(`:reboot ${mode}`, { noLink: true })
 			self.log?.('info', `Galaxy reboot requested (mode=${mode})`)
 		},
 	}

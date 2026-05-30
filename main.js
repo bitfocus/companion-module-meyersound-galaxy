@@ -12,6 +12,7 @@ const { DiscoveryHelper } = require('./discovery/helper')
 const { VirtualGalaxyScanner } = require('./discovery/virtual-scan')
 const { macToIPv6LinkLocal, modelNameFromEntityModelId } = require('./discovery/galaxy-meta')
 const discoveryCache = require('./discovery/cache')
+const { LinkBus } = require('./link/bus')
 
 // Protocol constants
 const EOL_SPLIT = /\r\n|\n|\r/ // Line ending split pattern for incoming data
@@ -168,6 +169,10 @@ class ModuleInstance extends InstanceBase {
 		this.cmdConnecting = false
 		this.cmdTimer = null
 
+		// cross-instance link bus (mirror commands to connections sharing a Link ID)
+		this._linkBus = null
+		this._originId = this.id || `lk-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
+
 		// state caches
 		this.inMute = {}
 		this.outMute = {}
@@ -320,6 +325,15 @@ class ModuleInstance extends InstanceBase {
 		this._seedVariables()
 		this._updateSpeakerTestVars()
 
+		// Cross-instance link bus: only open the socket when a Link ID is set.
+		this._linkBus = new LinkBus({
+			originId: this._originId,
+			log: (lvl, m) => this.log?.(lvl, m),
+			onMessage: (line) => this._onLinkLine(line),
+		})
+		this._linkBus.setLinkId(this.config?.link_id || '')
+		if (this.config?.link_id) this._linkBus.start()
+
 		// Restore the saved label + last-known host/port for the picked
 		// Galaxy so the dropdown can show it as "Name · Model (offline)"
 		// when the device is down, AND so _resolveHostPortFromConfig can
@@ -331,10 +345,10 @@ class ModuleInstance extends InstanceBase {
 			const parts = String(this.config._remembered_label).split('|')
 			const portNum = parts[3] ? parseInt(parts[3], 10) : NaN
 			this._lastKnownLabels.set(this.config.auto_key, {
-				name:  parts[0] || '',
+				name: parts[0] || '',
 				model: parts[1] || '',
-				host:  parts[2] || '',
-				port:  Number.isFinite(portNum) ? portNum : null,
+				host: parts[2] || '',
+				port: Number.isFinite(portNum) ? portNum : null,
 			})
 		}
 
@@ -361,23 +375,47 @@ class ModuleInstance extends InstanceBase {
 		this._stopSpeakerFlashTimer()
 		this._stopDiscovery()
 
-		clearTimeout(this._actionsRefreshTimer);   this._actionsRefreshTimer = null
-		clearTimeout(this._feedbacksRefreshTimer); this._feedbacksRefreshTimer = null
-		clearTimeout(this._variablesRefreshTimer); this._variablesRefreshTimer = null
-		clearTimeout(this._meterFlushTimer);       this._meterFlushTimer = null
-		clearTimeout(this._presetsRefreshTimer);   this._presetsRefreshTimer = null
+		clearTimeout(this._actionsRefreshTimer)
+		this._actionsRefreshTimer = null
+		clearTimeout(this._feedbacksRefreshTimer)
+		this._feedbacksRefreshTimer = null
+		clearTimeout(this._variablesRefreshTimer)
+		this._variablesRefreshTimer = null
+		clearTimeout(this._meterFlushTimer)
+		this._meterFlushTimer = null
+		clearTimeout(this._presetsRefreshTimer)
+		this._presetsRefreshTimer = null
 
-		try { this.subSock?.destroy() } catch {}
+		try {
+			this.subSock?.destroy()
+		} catch {}
 		this.subSock = null
-		clearTimeout(this.cmdTimer); this.cmdTimer = null
-		try { this.cmdSock?.destroy() } catch {}
+		clearTimeout(this.cmdTimer)
+		this.cmdTimer = null
+		try {
+			this.cmdSock?.destroy()
+		} catch {}
 		this.cmdSock = null
+
+		try {
+			this._linkBus?.stop()
+		} catch {}
+		this._linkBus = null
 	}
 
 	async configUpdated(config) {
-		const prevKey  = this.config?.auto_key
+		const prevKey = this.config?.auto_key
 		const prevHost = this.config?.manual_host
+		const prevLinkId = this.config?.link_id || ''
 		this.config = config
+
+		// Join/leave/swap the link bus when the Link ID changes
+		const newLinkId = config?.link_id || ''
+		if (newLinkId !== prevLinkId && this._linkBus) {
+			this._linkBus.setLinkId(newLinkId)
+			if (newLinkId) this._linkBus.start()
+			else this._linkBus.stop()
+		}
 
 		this.updateActions()
 		this.updateFeedbacks()
@@ -391,22 +429,30 @@ class ModuleInstance extends InstanceBase {
 		this._stopOutputChase()
 		this._stopSpeakerFlashTimer()
 
-		clearTimeout(this._actionsRefreshTimer);   this._actionsRefreshTimer = null
-		clearTimeout(this._feedbacksRefreshTimer); this._feedbacksRefreshTimer = null
-		clearTimeout(this._variablesRefreshTimer); this._variablesRefreshTimer = null
-		clearTimeout(this._meterFlushTimer);       this._meterFlushTimer = null
+		clearTimeout(this._actionsRefreshTimer)
+		this._actionsRefreshTimer = null
+		clearTimeout(this._feedbacksRefreshTimer)
+		this._feedbacksRefreshTimer = null
+		clearTimeout(this._variablesRefreshTimer)
+		this._variablesRefreshTimer = null
+		clearTimeout(this._meterFlushTimer)
+		this._meterFlushTimer = null
 
 		// Reconnect if the target changed: either the dropdown selection, or
 		// (when in manual mode) the typed host/port.
 		const targetChanged =
-			config.auto_key !== prevKey ||
-			(config.auto_key === '__manual__' && config.manual_host !== prevHost)
+			config.auto_key !== prevKey || (config.auto_key === '__manual__' && config.manual_host !== prevHost)
 
 		if (targetChanged) {
-			try { this.subSock?.destroy() } catch {}
+			try {
+				this.subSock?.destroy()
+			} catch {}
 			this.subSock = null
-			clearTimeout(this.cmdTimer); this.cmdTimer = null
-			try { this.cmdSock?.destroy() } catch {}
+			clearTimeout(this.cmdTimer)
+			this.cmdTimer = null
+			try {
+				this.cmdSock?.destroy()
+			} catch {}
 			this.cmdSock = null
 			this._reconnectAttempts = 0
 			this._reconnectDelay = RECONNECT_DELAY_MS
@@ -464,6 +510,18 @@ class ModuleInstance extends InstanceBase {
 					'we append .local automatically (example: MyGalaxy.MyGroup). ' +
 					'Galaxy always listens on TCP port 25003.',
 				isVisible: (options) => options.auto_key === '__manual__',
+			},
+			{
+				type: 'textinput',
+				id: 'link_id',
+				label: 'Link ID (optional)',
+				width: 12,
+				default: '',
+				tooltip:
+					'Connections on THIS Companion server that share the same non-empty Link ID ' +
+					'mirror each other: any action sent to this Galaxy is replayed on every other ' +
+					'connection with the same Link ID (e.g. mute Left also mutes Right). Leave blank ' +
+					'to disable linking. Example: set "stage-subs" on both the Left and Right Galaxy.',
 			},
 			// Hidden cache for the picked Galaxy's last-known "name|model" so
 			// the dropdown shows a real label when the device is offline.
@@ -1306,15 +1364,25 @@ class ModuleInstance extends InstanceBase {
 		})
 	}
 
-	_cmdSendLine(line) {
+	_cmdSendLine(line, opts) {
 		this.cmdQueue.push(line)
 		this._cmdFlush()
+		// Mirror to linked instances unless opted out, or unless this line was itself a replay.
+		if (!opts || (!opts.noLink && !opts._fromLink)) this._linkBus?.send(line)
 	}
-	_cmdSendBatch(lines) {
+	_cmdSendBatch(lines, opts) {
 		if (lines?.length) {
 			this.cmdQueue.push(...lines)
 			this._cmdFlush()
+			if (!opts || !opts.noLink) {
+				for (const l of lines) this._linkBus?.send(l)
+			}
 		}
+	}
+	// A command line received from a linked peer: replay locally, never re-broadcast (loop-safe).
+	_onLinkLine(line) {
+		if (this._destroyed) return
+		this._cmdSendLine(line, { _fromLink: true })
 	}
 
 	_cmdFlush() {
@@ -1324,8 +1392,12 @@ class ModuleInstance extends InstanceBase {
 		if (this.cmdQueue.length === 0) {
 			clearTimeout(this.cmdTimer)
 			this.cmdTimer = setTimeout(() => {
-				try { s.end() } catch {}
-				try { s.destroy() } catch {}
+				try {
+					s.end()
+				} catch {}
+				try {
+					s.destroy()
+				} catch {}
 				this.cmdSock = null
 			}, CMD_SOCKET_TIMEOUT_MS)
 			return
@@ -1336,15 +1408,23 @@ class ModuleInstance extends InstanceBase {
 			s.write(Buffer.from(lines.join(TX_EOL) + TX_EOL, 'utf8'))
 		} catch {
 			this.cmdQueue.unshift(...lines)
-			try { s.end() } catch {}
-			try { s.destroy() } catch {}
+			try {
+				s.end()
+			} catch {}
+			try {
+				s.destroy()
+			} catch {}
 			this.cmdSock = null
 			this._ensureCmdSocket()
 			return
 		}
 		this.cmdTimer = setTimeout(() => {
-			try { s.end() } catch {}
-			try { s.destroy() } catch {}
+			try {
+				s.end()
+			} catch {}
+			try {
+				s.destroy()
+			} catch {}
 			this.cmdSock = null
 		}, CMD_SOCKET_TIMEOUT_MS)
 	}
@@ -2244,7 +2324,7 @@ class ModuleInstance extends InstanceBase {
 		const msg = 'Bitfocus Companion is connected'
 		this._connectLogSent = true
 		try {
-			this._cmdSendLine(`:add_log_message "${msg.replace(/"/g, '\\"')}"`)
+			this._cmdSendLine(`:add_log_message "${msg.replace(/"/g, '\\"')}"`, { noLink: true })
 			this.log?.('info', `Galaxy log: ${msg}`)
 		} catch (err) {
 			this.log?.('error', `Failed to announce connection: ${err?.message || err}`)
@@ -2329,7 +2409,7 @@ class ModuleInstance extends InstanceBase {
 			const b = BigInt(bit)
 			const now = typeof this.accessPrivilege === 'bigint' ? this.accessPrivilege : 0n
 			const next = now ^ b
-			this._cmdSendLine(`/system/access/1/privilege=${next.toString()}`)
+			this._cmdSendLine(`/system/access/1/privilege=${next.toString()}`, { noLink: true })
 			this.accessPrivilege = next
 			this.setVariableValues({ access_privilege: next.toString() })
 			this.checkFeedbacks && this.checkFeedbacks('access_priv_has', 'access_priv_equals')
@@ -4140,7 +4220,7 @@ class ModuleInstance extends InstanceBase {
 		// cache-hydrated entries the helper hasn't confirmed are pruned —
 		// they're stale (device unplugged since last write) and shouldn't
 		// linger as ghosts in the dropdown.
-		const MIN_MS   = 2000
+		const MIN_MS = 2000
 		const QUIET_MS = 3000
 		this._discoveryStable = false
 		this._lastDeviceArrivalAt = Date.now()
@@ -4157,7 +4237,10 @@ class ModuleInstance extends InstanceBase {
 				for (const key of this._cacheHydratedKeys) {
 					if (this._confirmedKeys.has(key)) continue
 					const i = this._mdnsDevices.findIndex((d) => d.key === key)
-					if (i >= 0) { this._mdnsDevices.splice(i, 1); pruned = true }
+					if (i >= 0) {
+						this._mdnsDevices.splice(i, 1)
+						pruned = true
+					}
 				}
 				this._cacheHydratedKeys = null
 				if (pruned) this._scheduleCacheWrite()
@@ -4195,18 +4278,20 @@ class ModuleInstance extends InstanceBase {
 		})
 		// `helper-error` is also logged by DiscoveryHelper itself — we only
 		// need to react here when we want to do something beyond logging.
-		this._discoveryHelper.on('helper-error', () => { /* already logged */ })
+		this._discoveryHelper.on('helper-error', () => {
+			/* already logged */
+		})
 		this._discoveryHelper.on('helper-exit', (info) => {
 			if (info.unexpected) this.log('warn', `discovery helper exited (code=${info.code}); restarting`)
 		})
-		this._discoveryHelper.on('device-added',   (dev) => this._onRealDiscovered(dev))
+		this._discoveryHelper.on('device-added', (dev) => this._onRealDiscovered(dev))
 		this._discoveryHelper.on('device-updated', (dev) => this._onRealDiscovered(dev))
 		this._discoveryHelper.on('device-removed', (dev) => this._onDeviceLost(dev.entity_id))
 		this._discoveryHelper.start()
 
 		// Local: TCP port-probe on 127.0.0.1 for virtual Galaxy instances.
 		this._virtScan = new VirtualGalaxyScanner({ log: (l, m) => this.log(l, m) })
-		this._virtScan.on('virtual-added',   (v) => this._onVirtualDiscovered(v))
+		this._virtScan.on('virtual-added', (v) => this._onVirtualDiscovered(v))
 		this._virtScan.on('virtual-updated', (v) => this._onVirtualDiscovered(v))
 		this._virtScan.on('virtual-removed', (v) => this._onDeviceLost(v.entity_id))
 		this._virtScan.start()
@@ -4222,23 +4307,29 @@ class ModuleInstance extends InstanceBase {
 			this._cacheWriteTimer = null
 		}
 		if (this._discoveryHelper) {
-			try { this._discoveryHelper.stop() } catch {}
+			try {
+				this._discoveryHelper.stop()
+			} catch {}
 			this._discoveryHelper = null
 		}
 		if (this._virtScan) {
-			try { this._virtScan.stop() } catch {}
+			try {
+				this._virtScan.stop()
+			} catch {}
 			this._virtScan = null
 		}
 	}
 
 	_onRealDiscovered(dev) {
-		const key  = dev.entity_id
+		const key = dev.entity_id
 		const host = macToIPv6LinkLocal(dev.src_mac, dev.iface || '')
 		const port = DEFAULT_PHYSICAL_PORT
 		const model = modelNameFromEntityModelId(dev.entity_model_id)
 		const prev = this._mdnsDevices.find((d) => d.key === key)
 		const entry = {
-			key, host, port,
+			key,
+			host,
+			port,
 			name: prev?.name || '',
 			model: model || prev?.model || '',
 			serial: prev?.serial || '',
@@ -4263,7 +4354,7 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	_onVirtualDiscovered(v) {
-		const key  = v.entity_id   // 'virtual:127.0.0.1:50503' (synthesized)
+		const key = v.entity_id // 'virtual:127.0.0.1:50503' (synthesized)
 		const host = v.host
 		const port = v.port
 		// Always use the entity-model-id mapping so virtual entries read
@@ -4273,7 +4364,9 @@ class ModuleInstance extends InstanceBase {
 		const model = `${modelNameFromEntityModelId(v.entity_model_id)} (virtual)`
 		const prev = this._mdnsDevices.find((d) => d.key === key)
 		const entry = {
-			key, host, port,
+			key,
+			host,
+			port,
 			name: v.entity_name || prev?.name || '',
 			model,
 			serial: v.serial_number || prev?.serial || '',
@@ -4324,7 +4417,9 @@ class ModuleInstance extends InstanceBase {
 			if (done) return
 			done = true
 			this._nameFetchInflight.delete(key)
-			try { sock.destroy() } catch {}
+			try {
+				sock.destroy()
+			} catch {}
 			if (!name) return
 			const cur = this._mdnsDevices.find((d) => d.key === key)
 			if (!cur) return
@@ -4336,8 +4431,14 @@ class ModuleInstance extends InstanceBase {
 			this._scheduleVariablesRefresh()
 		}
 		const timer = setTimeout(() => finish(null), 3000)
-		sock.on('error', () => { clearTimeout(timer); finish(null) })
-		sock.on('close', () => { clearTimeout(timer); finish(null) })
+		sock.on('error', () => {
+			clearTimeout(timer)
+			finish(null)
+		})
+		sock.on('close', () => {
+			clearTimeout(timer)
+			finish(null)
+		})
 		sock.on('data', (chunk) => {
 			buf += chunk.toString('utf8')
 			const parts = buf.split(EOL_SPLIT)
@@ -4355,20 +4456,25 @@ class ModuleInstance extends InstanceBase {
 		})
 		try {
 			sock.connect(port, host, () => {
-				try { sock.write(Buffer.from(`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}`, 'utf8')) }
-				catch { finish(null) }
+				try {
+					sock.write(Buffer.from(`+${ENTITY_NAME_PATH}${TX_EOL}${ENTITY_NAME_PATH}${TX_EOL}`, 'utf8'))
+				} catch {
+					finish(null)
+				}
 			})
-		} catch { finish(null) }
+		} catch {
+			finish(null)
+		}
 	}
 
 	_rememberLabel(key, name, model, host, port) {
 		if (!key) return
 		const cur = this._lastKnownLabels.get(key) || {}
 		const merged = {
-			name:  name  || cur.name  || '',
+			name: name || cur.name || '',
 			model: model || cur.model || '',
-			host:  host  || cur.host  || '',
-			port:  port  || cur.port  || null,
+			host: host || cur.host || '',
+			port: port || cur.port || null,
 		}
 		this._lastKnownLabels.set(key, merged)
 		if (key === this.config?.auto_key) {
@@ -4376,7 +4482,9 @@ class ModuleInstance extends InstanceBase {
 			if (this.config?._remembered_label !== encoded) {
 				const next = { ...this.config, _remembered_label: encoded }
 				this.config = next
-				try { this.saveConfig(next) } catch {}
+				try {
+					this.saveConfig(next)
+				} catch {}
 			}
 		}
 	}
@@ -4385,7 +4493,8 @@ class ModuleInstance extends InstanceBase {
 	_galaxyChoiceList() {
 		const isVirtual = (d) => d.key && d.key.startsWith('virtual:')
 		const list = [...this._mdnsDevices].sort((a, b) => {
-			const av = isVirtual(a), bv = isVirtual(b)
+			const av = isVirtual(a),
+				bv = isVirtual(b)
 			if (av !== bv) return av ? 1 : -1
 			return (a.name || '').localeCompare(b.name || '')
 		})
@@ -4402,7 +4511,7 @@ class ModuleInstance extends InstanceBase {
 		const sel = this.config?.auto_key
 		if (sel && sel !== '__manual__' && !list.some((d) => d.key === sel)) {
 			const cached = this._lastKnownLabels.get(sel)
-			const name  = cached?.name  || '(unknown)'
+			const name = cached?.name || '(unknown)'
 			const model = cached?.model || ''
 			choices.push({
 				id: sel,
@@ -4479,10 +4588,7 @@ class ModuleInstance extends InstanceBase {
 				return
 			}
 			if (!host) {
-				this.updateStatus(
-					InstanceStatus.BadConfig,
-					'Manual mode — enter IPv4, IPv6, or mDNS address',
-				)
+				this.updateStatus(InstanceStatus.BadConfig, 'Manual mode — enter IPv4, IPv6, or mDNS address')
 				return
 			}
 			this.updateStatus(InstanceStatus.Connecting, `Connecting to ${host}:${port}…`)
@@ -4494,10 +4600,7 @@ class ModuleInstance extends InstanceBase {
 		//    Galaxys may still be arriving and we want the UX to reflect
 		//    "the list isn't done yet" rather than jumping to green early.
 		if (!this._discoveryStable) {
-			this.updateStatus(
-				InstanceStatus.Connecting,
-				`Discovery in progress — ${n} Galaxy${n === 1 ? '' : 's'} found…`,
-			)
+			this.updateStatus(InstanceStatus.Connecting, `Discovery in progress — ${n} Galaxy${n === 1 ? '' : 's'} found…`)
 			return
 		}
 
