@@ -257,11 +257,11 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Mode',
 				default: 'endfire',
 				choices: [
+					{ id: 'array', label: 'Array' },
+					{ id: 'array_endfire', label: 'Array End-Fire' },
 					{ id: 'endfire', label: 'End-Fire' },
 					{ id: 'endfire_gradient', label: 'End-Fire Gradient' },
 					{ id: 'gradient', label: 'Gradient' },
-					{ id: 'array', label: 'Array' },
-					{ id: 'array_endfire', label: 'Array End-Fire' },
 				],
 			},
 
