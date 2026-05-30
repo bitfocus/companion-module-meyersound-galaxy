@@ -242,6 +242,11 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		'endfire_speaker',
 		'endfire_phase_',
 	)
+	const { defs: gradientPhaseOptionDefs, speakerPhaseOption: gradientSpeakerPhaseOption } = buildPhaseDefs(
+		'gradient',
+		'gradient_speaker',
+		'gradient_phase_',
+	)
 
 	actions['subassist_combined'] = {
 		name: 'Sub Design Assist',
@@ -683,6 +688,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: subwooferSpeakerChoices,
 				isVisible: (o) => o.mode === 'gradient',
 			},
+			...gradientPhaseOptionDefs,
 			...gradientStartingPointOptionDefs_Front,
 			{
 				type: 'multidropdown',
@@ -1143,14 +1149,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					return
 				}
 
-				// Get the delay integration type ID
+				// Delay integration type from the selected Phase Curve, falling back to the first phase
 				let typeId = null
 				const speakerEntry = productIntegrationSpeakers.get(speakerKey)
-
-				// Use the first available phase for this speaker
 				if (speakerEntry?.phases?.length > 0) {
-					const fallbackPhase = speakerEntry.phases[0]
-					typeId = fallbackPhase?.typeId ?? null
+					const phaseOptionId = gradientSpeakerPhaseOption.get(speakerKey)
+					const selectedPhaseId = phaseOptionId ? String(e.options?.[phaseOptionId] || '').trim() : ''
+					const phase = speakerEntry.phases.find((p) => p.id === selectedPhaseId) || speakerEntry.phases[0]
+					typeId = phase?.typeId ?? null
 				}
 
 				if (!typeId) {
