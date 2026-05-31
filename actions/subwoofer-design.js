@@ -174,6 +174,10 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		'options',
 		`return !!options && options.mode === 'endfire_gradient' && ${noRearFacingJson}.includes(options.eg_speaker)`,
 	)
+	const gradientNoRearVisible = new Function(
+		'options',
+		`return !!options && options.mode === 'gradient' && ${noRearFacingJson}.includes(options.gradient_speaker)`,
+	)
 
 	// Speaker keys with no Front Facing preset (End-Fire auto-applies front-facing processing).
 	const noFrontFacingSpeakers = []
@@ -305,16 +309,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			},
 			{
 				type: 'static-text',
-				id: 'preview',
-				label: 'Recommended spacing',
-				value: subassistPreview(self),
+				id: 'speed_preview',
+				label: 'Speed of sound',
+				value: endfirePreview(self),
 				isVisible: (o) => o.mode === 'endfire',
 			},
 			{
 				type: 'static-text',
-				id: 'speed_preview',
-				label: 'Speed of sound',
-				value: endfirePreview(self),
+				id: 'preview',
+				label: 'Recommended spacing',
+				value: subassistPreview(self),
 				isVisible: (o) => o.mode === 'endfire',
 			},
 			{
@@ -407,6 +411,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			},
 			...arrayPhaseOptionDefs,
 			{
+				type: 'static-text',
+				id: 'arc_preview',
+				label: 'Speed of sound',
+				value: arcPreview(self),
+				isVisible: (o) => o.mode === 'array',
+			},
+			{
 				type: 'number',
 				id: 'numSubs',
 				label: 'Number of subs',
@@ -474,13 +485,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array',
 			},
 			{
-				type: 'static-text',
-				id: 'arc_preview',
-				label: 'Speed of sound',
-				value: arcPreview(self),
-				isVisible: (o) => o.mode === 'array',
-			},
-			{
 				type: 'textinput',
 				id: 'array_channel_prefix',
 				label: 'Channel name prefix (optional)',
@@ -514,6 +518,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			...arrayendfirePhaseOptionDefs,
+			{
+				type: 'static-text',
+				id: 'arrayendfire_speed_preview',
+				label: 'Speed of sound',
+				value: arcPreview(self),
+				isVisible: (o) => o.mode === 'array_endfire',
+			},
 			{
 				type: 'number',
 				id: 'freq_arrayendfire',
@@ -700,6 +711,24 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			},
 			...gradientPhaseOptionDefs,
 			{
+				type: 'static-text',
+				id: 'gradient_no_rear_warning',
+				label: 'No factory Rear Facing preset',
+				value:
+					'This loudspeaker has no factory rear-facing settings. Enter a rear delay below — it is applied to the reversed outputs and polarity is reversed automatically.',
+				isVisible: gradientNoRearVisible,
+			},
+			{
+				type: 'number',
+				id: 'gradient_manual_rear_delay_ms',
+				label: 'Rear delay (ms)',
+				default: 0,
+				min: 0,
+				max: 100,
+				step: 0.01,
+				isVisible: gradientNoRearVisible,
+			},
+			{
 				type: 'multidropdown',
 				id: 'gradient_outputs_front',
 				label: 'Output Front',
@@ -770,6 +799,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: egNoRearVisible,
 			},
 			{
+				type: 'static-text',
+				id: 'eg_speed_preview',
+				label: 'Speed of sound',
+				value: endfirePreview(self),
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
 				type: 'number',
 				id: 'freq_eg',
 				label: 'Target frequency (Hz)',
@@ -805,13 +841,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				id: 'eg_spacing_preview',
 				label: 'Recommended tap spacing (from target freq + temp)',
 				value: subassistPreview(self),
-				isVisible: (o) => o.mode === 'endfire_gradient',
-			},
-			{
-				type: 'static-text',
-				id: 'eg_speed_preview',
-				label: 'Speed of sound',
-				value: endfirePreview(self),
 				isVisible: (o) => o.mode === 'endfire_gradient',
 			},
 			{
@@ -1240,42 +1269,41 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				}
 
 				if (reversedOutputs.length > 0) {
-					const reversedCommands =
-						rearEntry && Array.isArray(rearEntry.controlPoints) && rearEntry.controlPoints.length > 0
-							? rearEntry.controlPoints
-							: null
-					const reversedTitle = reversedCommands ? rearEntry.title || '' : ''
-					if (!reversedCommands) {
+					// Reversed outputs use the Rear Facing preset (polarity + cabinet delay). Loudspeakers
+					// without a rear preset fall back to the front-facing filters + a user-typed rear delay,
+					// with polarity reversed automatically.
+					let reversedCommands, reversedTitle, reversedDelaySamples
+					if (rearEntry && Array.isArray(rearEntry.controlPoints) && rearEntry.controlPoints.length > 0) {
+						reversedCommands = rearEntry.controlPoints // delay + polarity already baked in
+						reversedTitle = rearEntry.title || ''
+						reversedDelaySamples = null
+					} else {
+						const manualMs = Math.max(0, Number(e.options.gradient_manual_rear_delay_ms) || 0)
+						reversedDelaySamples = Math.round(manualMs * 96)
+						reversedCommands = (frontEntry?.controlPoints || []).filter((cp) => !/\/delay=/.test(String(cp)))
+						reversedTitle = `${frontEntry?.title || 'front'} + reversed polarity (manual ${manualMs.toFixed(2)} ms)`
 						self.log?.(
 							'warn',
-							`Loudspeaker ${speakerKey} has no factory Rear Facing preset — reversed outputs get the delay-integration type only (no polarity/cabinet delay).`,
+							`Loudspeaker ${speakerKey} has no factory Rear Facing preset — reversed outputs use manual rear delay ${manualMs.toFixed(2)} ms with polarity reversed automatically.`,
 						)
 					}
+					const reversedHasPolarity = reversedCommands.some((cp) => /polarity_reversal/.test(String(cp)))
 
 					for (let k = 0; k < reversedOutputs.length; k++) {
 						const ch = reversedOutputs[k]
-						// Apply factory reset if checkbox is enabled
 						if (shouldReset) {
-							for (const resetCmd of FACTORY_RESET_COMMANDS) {
-								const cmd = resetCmd.replace(/\{ch\}/g, ch)
-								self._cmdSendLine(cmd)
-							}
+							for (const resetCmd of FACTORY_RESET_COMMANDS) self._cmdSendLine(resetCmd.replace(/\{ch\}/g, ch))
 						}
-
-						// Apply delay integration type
 						self._cmdSendLine(`/processing/output/${ch}/delay_integration/type=${finalTypeId}`)
-
-						// Optional channel naming
 						applyChannelName(ch, channelPrefix, reversedOutputs.length > 1 ? `Reversed ${k + 1}` : 'Reversed')
-
-						// Apply starting point commands if any
-						if (reversedCommands && Array.isArray(reversedCommands)) {
-							for (const cmd of reversedCommands) {
-								const finalCmd = cmd.replace(/\{ch\}/g, ch).replace(/\{\}/g, ch)
-								self._cmdSendLine(finalCmd)
-							}
+						for (const cmd of reversedCommands) {
+							self._cmdSendLine(cmd.replace(/\{ch\}/g, ch).replace(/\{\}/g, ch))
 						}
-
+						if (!reversedHasPolarity) self._cmdSendLine(`/processing/output/${ch}/polarity_reversal='true'`)
+						if (reversedDelaySamples !== null) {
+							self._cmdSendLine(`/processing/output/${ch}/delay=${reversedDelaySamples}`)
+							self._applyOutputDelay(ch, reversedDelaySamples)
+						}
 						const spLabel = reversedTitle ? ` (${reversedTitle})` : ''
 						lines.push(`Reversed ch ${ch}${spLabel}`)
 					}
