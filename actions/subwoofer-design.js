@@ -526,6 +526,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			{
+				type: 'static-text',
+				id: 'arrayendfire_spacing_preview',
+				label: 'Recommended tap spacing (from end-fire freq + temp)',
+				value: subassistPreview(self),
+				isVisible: (o) => o.mode === 'array_endfire',
+			},
+			{
 				type: 'number',
 				id: 'freq_arrayendfire',
 				label: 'End-Fire frequency (Hz)',
@@ -806,6 +813,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'endfire_gradient',
 			},
 			{
+				type: 'static-text',
+				id: 'eg_spacing_preview',
+				label: 'Recommended tap spacing (from target freq + temp)',
+				value: subassistPreview(self),
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
 				type: 'number',
 				id: 'freq_eg',
 				label: 'Target frequency (Hz)',
@@ -834,13 +848,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'C', label: '°C' },
 					{ id: 'F', label: '°F' },
 				],
-				isVisible: (o) => o.mode === 'endfire_gradient',
-			},
-			{
-				type: 'static-text',
-				id: 'eg_spacing_preview',
-				label: 'Recommended tap spacing (from target freq + temp)',
-				value: subassistPreview(self),
 				isVisible: (o) => o.mode === 'endfire_gradient',
 			},
 			{
