@@ -247,6 +247,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		'gradient_speaker',
 		'gradient_phase_',
 	)
+	const { defs: arrayPhaseOptionDefs, speakerPhaseOption: arraySpeakerPhaseOption } = buildPhaseDefs(
+		'array',
+		'array_speaker',
+		'array_phase_',
+	)
+	const { defs: arrayendfirePhaseOptionDefs, speakerPhaseOption: arrayendfireSpeakerPhaseOption } = buildPhaseDefs(
+		'array_endfire',
+		'arrayendfire_speaker',
+		'arrayendfire_phase_',
+	)
 
 	actions['subassist_combined'] = {
 		name: 'Sub Design Assist',
@@ -395,7 +405,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: subwooferSpeakerChoices,
 				isVisible: (o) => o.mode === 'array',
 			},
-			...arrayStartingPointOptionDefs,
+			...arrayPhaseOptionDefs,
 			{
 				type: 'number',
 				id: 'numSubs',
@@ -503,7 +513,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: subwooferSpeakerChoices,
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
-			...arrayendfireStartingPointOptionDefs,
+			...arrayendfirePhaseOptionDefs,
 			{
 				type: 'number',
 				id: 'freq_arrayendfire',
@@ -995,7 +1005,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						return
 					}
 
-					// Get product integration settings if specified
+					// Product integration: delay-integration type from the selected Phase Curve, and the
+					// Front Facing starting point applied automatically (all subs face the same way).
 					const speakerKey = String(e.options?.array_speaker || '')
 					let typeId = null
 					let startingPointCommands = null
@@ -1004,21 +1015,18 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					if (speakerKey && speakerKey !== 'OFF' && speakerKey !== '') {
 						const speakerEntry = productIntegrationSpeakers.get(speakerKey)
 						if (speakerEntry?.phases?.length > 0) {
-							const fallbackPhase = speakerEntry.phases[0]
-							typeId = fallbackPhase?.typeId ?? null
+							const phaseOptionId = arraySpeakerPhaseOption.get(speakerKey)
+							const selectedPhaseId = phaseOptionId ? String(e.options?.[phaseOptionId] || '').trim() : ''
+							const phase = speakerEntry.phases.find((p) => p.id === selectedPhaseId) || speakerEntry.phases[0]
+							typeId = phase?.typeId ?? null
 						}
 
-						const startingPointOptionId = arraySpeakerStartingPointOption.get(speakerKey)
-						if (startingPointOptionId) {
-							const startingPointId = String(e.options?.[startingPointOptionId] || '').trim()
-							if (startingPointId) {
-								const entries = productIntegrationStartingPoints.get(speakerKey) || []
-								const entry = entries.find((sp) => sp.id === startingPointId)
-								if (entry && Array.isArray(entry.controlPoints) && entry.controlPoints.length > 0) {
-									startingPointCommands = entry.controlPoints
-									startingPointTitle = entry.title || ''
-								}
-							}
+						const entries = productIntegrationStartingPoints.get(speakerKey) || []
+						const frontEntry = entries.find((sp) => isFrontFacingTitle(sp.title))
+						if (frontEntry && Array.isArray(frontEntry.controlPoints) && frontEntry.controlPoints.length > 0) {
+							// Front Facing carries no delay; drop any delay line so the arc delay isn't overwritten
+							startingPointCommands = frontEntry.controlPoints.filter((cp) => !/\/delay=/.test(String(cp)))
+							startingPointTitle = frontEntry.title || ''
 						}
 					}
 
@@ -1594,7 +1602,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						arcOffsetsMs.push(lastHalf[i])
 					}
 
-					// Get product integration settings if specified
+					// Product integration: delay-integration type from the selected Phase Curve, and the
+					// Front Facing starting point applied automatically (all subs face the same way).
 					const speakerKey = String(o?.arrayendfire_speaker || '')
 					let typeId = null
 					let startingPointCommands = null
@@ -1603,21 +1612,18 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					if (speakerKey && speakerKey !== 'OFF' && speakerKey !== '') {
 						const speakerEntry = productIntegrationSpeakers.get(speakerKey)
 						if (speakerEntry?.phases?.length > 0) {
-							const fallbackPhase = speakerEntry.phases[0]
-							typeId = fallbackPhase?.typeId ?? null
+							const phaseOptionId = arrayendfireSpeakerPhaseOption.get(speakerKey)
+							const selectedPhaseId = phaseOptionId ? String(o?.[phaseOptionId] || '').trim() : ''
+							const phase = speakerEntry.phases.find((p) => p.id === selectedPhaseId) || speakerEntry.phases[0]
+							typeId = phase?.typeId ?? null
 						}
 
-						const startingPointOptionId = arrayendfireSpeakerStartingPointOption.get(speakerKey)
-						if (startingPointOptionId) {
-							const startingPointId = String(o?.[startingPointOptionId] || '').trim()
-							if (startingPointId) {
-								const entries = productIntegrationStartingPoints.get(speakerKey) || []
-								const entry = entries.find((sp) => sp.id === startingPointId)
-								if (entry && Array.isArray(entry.controlPoints) && entry.controlPoints.length > 0) {
-									startingPointCommands = entry.controlPoints
-									startingPointTitle = entry.title || ''
-								}
-							}
+						const entries = productIntegrationStartingPoints.get(speakerKey) || []
+						const frontEntry = entries.find((sp) => isFrontFacingTitle(sp.title))
+						if (frontEntry && Array.isArray(frontEntry.controlPoints) && frontEntry.controlPoints.length > 0) {
+							// Front Facing carries no delay; drop any delay line so the combined delay isn't overwritten
+							startingPointCommands = frontEntry.controlPoints.filter((cp) => !/\/delay=/.test(String(cp)))
+							startingPointTitle = frontEntry.title || ''
 						}
 					}
 
