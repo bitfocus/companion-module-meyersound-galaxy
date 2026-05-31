@@ -269,7 +269,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			{
 				type: 'dropdown',
 				id: 'endfire_speaker',
-				label: 'Loudspeaker (optional)',
+				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
 				isVisible: (o) => o.mode === 'endfire',
@@ -292,13 +292,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				max: 100,
 				step: 0.01,
 				isVisible: endfireNoFrontVisible,
-			},
-			{
-				type: 'checkbox',
-				id: 'reset_endfire',
-				label: 'Reset channels to factory defaults before applying',
-				default: false,
-				isVisible: (o) => o.mode === 'endfire',
 			},
 			{
 				type: 'static-text',
@@ -385,24 +378,24 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'endfire',
 			},
+			{
+				type: 'checkbox',
+				id: 'reset_endfire',
+				label: 'Reset channels to factory defaults before applying',
+				default: false,
+				isVisible: (o) => o.mode === 'endfire',
+			},
 
 			// ===== ARRAY OPTIONS =====
 			{
 				type: 'dropdown',
 				id: 'array_speaker',
-				label: 'Loudspeaker (optional)',
+				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
 				isVisible: (o) => o.mode === 'array',
 			},
 			...arrayStartingPointOptionDefs,
-			{
-				type: 'checkbox',
-				id: 'reset_array',
-				label: 'Reset channels to factory defaults before applying',
-				default: false,
-				isVisible: (o) => o.mode === 'array',
-			},
 			{
 				type: 'number',
 				id: 'numSubs',
@@ -493,24 +486,24 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'array',
 			},
+			{
+				type: 'checkbox',
+				id: 'reset_array',
+				label: 'Reset channels to factory defaults before applying',
+				default: false,
+				isVisible: (o) => o.mode === 'array',
+			},
 
 			// ===== ARRAY END-FIRE OPTIONS =====
 			{
 				type: 'dropdown',
 				id: 'arrayendfire_speaker',
-				label: 'Loudspeaker (optional)',
+				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			...arrayendfireStartingPointOptionDefs,
-			{
-				type: 'checkbox',
-				id: 'reset_arrayendfire',
-				label: 'Reset channels to factory defaults before applying',
-				default: false,
-				isVisible: (o) => o.mode === 'array_endfire',
-			},
 			{
 				type: 'number',
 				id: 'freq_arrayendfire',
@@ -678,6 +671,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: getOutputLinkGroupChoices(),
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
+			{
+				type: 'checkbox',
+				id: 'reset_arrayendfire',
+				label: 'Reset channels to factory defaults before applying',
+				default: false,
+				isVisible: (o) => o.mode === 'array_endfire',
+			},
 
 			// ===== GRADIENT OPTIONS =====
 			{
@@ -708,13 +708,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'gradient',
 			},
 			{
-				type: 'checkbox',
-				id: 'reset_gradient',
-				label: 'Reset channels to factory defaults before applying',
-				default: false,
-				isVisible: (o) => o.mode === 'gradient',
-			},
-			{
 				type: 'textinput',
 				id: 'gradient_channel_prefix',
 				label: 'Channel name prefix (optional)',
@@ -728,6 +721,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
+				isVisible: (o) => o.mode === 'gradient',
+			},
+			{
+				type: 'checkbox',
+				id: 'reset_gradient',
+				label: 'Reset channels to factory defaults before applying',
+				default: false,
 				isVisible: (o) => o.mode === 'gradient',
 			},
 
@@ -810,7 +810,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Depth (number of end-fire taps)',
 				default: '2',
 				choices: [
-					{ id: '1', label: '1 (T0 — gradient only)' },
 					{ id: '2', label: '2 (T0..T1)' },
 					{ id: '3', label: '3 (T0..T2)' },
 					{ id: '4', label: '4 (T0..T3)' },
@@ -846,18 +845,18 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'endfire_gradient',
 			},
 			{
-				type: 'checkbox',
-				id: 'reset_eg',
-				label: 'Reset channels to factory defaults before applying',
-				default: false,
-				isVisible: (o) => o.mode === 'endfire_gradient',
-			},
-			{
 				type: 'dropdown',
 				id: 'eg_link_group',
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
+				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+			{
+				type: 'checkbox',
+				id: 'reset_eg',
+				label: 'Reset channels to factory defaults before applying',
+				default: false,
 				isVisible: (o) => o.mode === 'endfire_gradient',
 			},
 		],
@@ -1375,7 +1374,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				// Make sure the rear outputs end up polarity-reversed even when synthesized.
 				const rearHasPolarity = rearControlPoints.some((cp) => /polarity_reversal/.test(String(cp)))
 
-				const depth = Math.min(EG_MAX_TAPS, Math.max(1, Number(e.options.eg_depth) || 2))
+				const depth = Math.min(EG_MAX_TAPS, Math.max(2, Number(e.options.eg_depth) || 2))
 				const firstFront = Math.max(1, Math.min(NUM_OUTPUTS, Math.round(Number(e.options.eg_first_front) || 1)))
 				const firstRear = Math.max(1, Math.min(NUM_OUTPUTS, Math.round(Number(e.options.eg_first_rear) || 2)))
 
