@@ -773,15 +773,6 @@
 					"/processing/output/{}/lowpass/type='4'"
 				],
 				"title": "USW-1P = 900-LFC Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "USW-1P Front Facing"
 			}
 		],
 		"UMS-1P": [
@@ -799,15 +790,6 @@
 					"/processing/output/{}/lowpass/type='4'"
 				],
 				"title": "UMS-1P = 900-LFC Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "UMS-1P Front Facing"
 			}
 		],
 		"UMS-1XP": [
@@ -825,15 +807,6 @@
 					"/processing/output/{}/lowpass/type='4'"
 				],
 				"title": "UMS-1XP = 900-LFC Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "UMS-1XP Front Facing"
 			}
 		],
 		"M3D-Sub": [
@@ -851,15 +824,6 @@
 					"/processing/output/{}/eq/1/gain='-4'"
 				],
 				"title": "M3D-Sub = 1100-LFC Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "M3D-Sub Front Facing"
 			}
 		],
 		"M2D-Sub": [
@@ -877,15 +841,6 @@
 					"/processing/output/{}/lowpass/type='4'"
 				],
 				"title": "M2D-Sub = 900-LFC Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "M2D-Sub Front Facing"
 			}
 		],
 		"M1D-Sub": [
@@ -903,15 +858,6 @@
 					"/processing/output/{}/lowpass/type='4'"
 				],
 				"title": "M1D-Sub = 900-LFC Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "M1D-Sub Front Facing"
 			}
 		]
 	}
