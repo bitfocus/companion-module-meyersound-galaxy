@@ -666,26 +666,6 @@
 					"/processing/output/{}/lowpass/type='2'"
 				],
 				"title": "700-HP = 1100-LFC Rear Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "700-HP Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/delay='384'",
-					"/processing/output/{}/polarity_reversal='true'",
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "700-HP Rear Facing"
 			}
 		],
 		"600-HP": [
@@ -714,26 +694,6 @@
 					"/processing/output/{}/lowpass/type='2'"
 				],
 				"title": "600-HP = 900-LFC Rear Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "600-HP Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/delay='336'",
-					"/processing/output/{}/polarity_reversal='true'",
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "600-HP Rear Facing"
 			}
 		],
 		"500-HP": [
@@ -762,26 +722,6 @@
 					"/processing/output/{}/lowpass/type='4'"
 				],
 				"title": "500-HP = 900-LFC Rear Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "500-HP Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/delay='288'",
-					"/processing/output/{}/polarity_reversal='true'",
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "500-HP Rear Facing"
 			}
 		],
 		"650-P": [
@@ -816,26 +756,6 @@
 					"/processing/output/{}/lowpass/type='2'"
 				],
 				"title": "650-P = 1100-LFC Rear Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "650-P Front Facing"
-			},
-			{
-				"controlPoints": [
-					"/processing/output/{}/delay='336'",
-					"/processing/output/{}/polarity_reversal='true'",
-					"/processing/output/{}/allpass/1/frequency='32'",
-					"/processing/output/{}/allpass/2/frequency='64'",
-					"/processing/output/{}/allpass/3/frequency='128'",
-					"/processing/output/{}/beam_control_allpass/q='1'"
-				],
-				"title": "650-P Rear Facing"
 			}
 		],
 		"USW-1P": [
