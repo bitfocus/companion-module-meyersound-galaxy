@@ -178,6 +178,10 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		'options',
 		`return !!options && options.mode === 'gradient' && ${noRearFacingJson}.includes(options.gradient_speaker)`,
 	)
+	const agNoRearVisible = new Function(
+		'options',
+		`return !!options && options.mode === 'array_gradient' && ${noRearFacingJson}.includes(options.ag_speaker)`,
+	)
 
 	// Speaker keys with no Front Facing preset (End-Fire auto-applies front-facing processing).
 	const noFrontFacingSpeakers = []
@@ -261,6 +265,11 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		'arrayendfire_speaker',
 		'arrayendfire_phase_',
 	)
+	const { defs: agPhaseOptionDefs, speakerPhaseOption: agSpeakerPhaseOption } = buildPhaseDefs(
+		'array_gradient',
+		'ag_speaker',
+		'ag_phase_',
+	)
 
 	actions['subassist_combined'] = {
 		name: 'Sub Design Assist',
@@ -273,6 +282,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				choices: [
 					{ id: 'array', label: 'Array' },
 					{ id: 'array_endfire', label: 'Array End-Fire' },
+					{ id: 'array_gradient', label: 'Array Gradient' },
 					{ id: 'endfire', label: 'End-Fire' },
 					{ id: 'endfire_gradient', label: 'End-Fire Gradient' },
 					{ id: 'gradient', label: 'Gradient' },
@@ -952,6 +962,164 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Reset channels to factory defaults before applying',
 				default: false,
 				isVisible: (o) => o.mode === 'endfire_gradient',
+			},
+
+			// ===== ARRAY GRADIENT OPTIONS =====
+			{
+				type: 'dropdown',
+				id: 'ag_speaker',
+				label: 'Loudspeaker',
+				default: '',
+				choices: subwooferSpeakerChoices,
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			...agPhaseOptionDefs,
+			{
+				type: 'static-text',
+				id: 'ag_no_rear_warning',
+				label: 'No factory Rear Facing preset',
+				value:
+					'This loudspeaker has no factory rear-facing settings. Enter a rear delay below — it is added to the rear outputs and polarity is reversed automatically.',
+				isVisible: agNoRearVisible,
+			},
+			{
+				type: 'number',
+				id: 'ag_manual_rear_delay_ms',
+				label: 'Rear delay (ms)',
+				default: 0,
+				min: 0,
+				max: 100,
+				step: 0.01,
+				isVisible: agNoRearVisible,
+			},
+			{
+				type: 'static-text',
+				id: 'ag_speed_preview',
+				label: 'Speed of sound',
+				value: arcPreview(self),
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'number',
+				id: 'ag_numSubs',
+				label: 'Number of subs (per side)',
+				default: 6,
+				min: 1,
+				max: NUM_OUTPUTS,
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'ag_output_mode',
+				label: 'Output',
+				default: 'stereo',
+				choices: [
+					{ id: 'stereo', label: 'Stereo (full array)' },
+					{ id: 'mono', label: 'Mono (first half only)' },
+				],
+				tooltip:
+					'Stereo writes every sub. Mono writes only the first half of the front and rear blocks ' +
+					'(the array is mirror-symmetric) for a single-sided deployment.',
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'checkbox',
+				id: 'ag_flip_layout',
+				label: 'Flip layout (start channel = 0 ms)',
+				default: false,
+				tooltip:
+					'Reverses the arc delay order so the starting channel gets the lowest (0 ms) arc delay and ' +
+					'ramps up (in-to-out instead of out-to-in).',
+				isVisible: (o) => o.mode === 'array_gradient' && o.ag_output_mode === 'mono',
+			},
+			{
+				type: 'dropdown',
+				id: 'ag_startCh_front',
+				label: 'First front output',
+				default: '1',
+				choices: outputChoicesFriendly,
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'ag_startCh_rear',
+				label: 'First rear output',
+				default: '7',
+				choices: outputChoicesFriendly,
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'ag_units',
+				label: 'Units',
+				default: 'm',
+				choices: [
+					{ id: 'm', label: 'Meters' },
+					{ id: 'ft', label: 'Feet' },
+				],
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'number',
+				id: 'ag_spacing',
+				label: 'Sub spacing',
+				default: 1.0,
+				step: 0.01,
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'number',
+				id: 'ag_radius',
+				label: 'Arc angle (degrees)',
+				default: 60,
+				min: 0,
+				max: 120,
+				step: 1,
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'number',
+				id: 'ag_temp',
+				label: 'Air temperature',
+				default: 20.0,
+				step: 0.1,
+				min: -40,
+				max: 140,
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'ag_tempUnit',
+				label: 'Temperature unit',
+				default: 'C',
+				choices: [
+					{ id: 'C', label: '°C' },
+					{ id: 'F', label: '°F' },
+				],
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'textinput',
+				id: 'ag_channel_prefix',
+				label: 'Channel name prefix (optional)',
+				default: '',
+				tooltip: 'When set, names each output "<prefix> Front #" / "<prefix> Rear #"',
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'dropdown',
+				id: 'ag_link_group',
+				label: 'Assign to Output Link Group',
+				default: '0',
+				choices: getOutputLinkGroupChoices(),
+				isVisible: (o) => o.mode === 'array_gradient',
+			},
+			{
+				type: 'checkbox',
+				id: 'reset_ag',
+				label: 'Reset channels to factory defaults before applying',
+				default: false,
+				isVisible: (o) => o.mode === 'array_gradient',
 			},
 		],
 		callback: async (e) => {
@@ -1801,6 +1969,161 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					}
 				} catch (err) {
 					self.log?.('error', `Array End-Fire failed: ${err?.message || err}`)
+				}
+			} else if (mode === 'array_gradient') {
+				// Array Gradient: a symmetric arc of front-facing subs (like Array) plus one rear-facing
+				// sub per front sub — the rear gets the same arc delay + the cabinet gradient delay, with
+				// polarity reversed (a cardioid arc).
+				try {
+					const o = e.options
+					const speakerKey = String(o?.ag_speaker || '')
+					if (!speakerKey || speakerKey === 'OFF' || speakerKey === '') {
+						self.log?.('warn', 'Please select a loudspeaker for Array Gradient mode')
+						return
+					}
+
+					const unitIn = o.ag_tempUnit === 'F' ? 'F' : 'C'
+					let T = Number.isFinite(Number(o.ag_temp)) ? Number(o.ag_temp) : 20
+					if (unitIn === 'F') T = ((T - 32) * 5) / 9
+					const c = speedOfSound_mps(T)
+					self._arcassist = { T, c }
+					try {
+						self.updateActions?.()
+					} catch {}
+
+					// Phase Curve -> delay-integration type id
+					let typeId = null
+					const speakerEntry = productIntegrationSpeakers.get(speakerKey)
+					if (speakerEntry?.phases?.length > 0) {
+						const phaseOptionId = agSpeakerPhaseOption.get(speakerKey)
+						const selectedPhaseId = phaseOptionId ? String(o?.[phaseOptionId] || '').trim() : ''
+						const phase = speakerEntry.phases.find((p) => p.id === selectedPhaseId) || speakerEntry.phases[0]
+						typeId = phase?.typeId ?? null
+					}
+					const finalTypeId = typeId ? String(typeId) : null
+
+					// Auto-detect Front Facing / Rear Facing starting points
+					const spEntries = productIntegrationStartingPoints.get(speakerKey) || []
+					const frontEntry = spEntries.find((sp) => isFrontFacingTitle(sp.title))
+					const rearEntry = spEntries.find((sp) => isRearFacingTitle(sp.title))
+					const stripDelay = (cps) => (cps || []).filter((cp) => !/\/delay=/.test(String(cp)))
+					const parseDelaySamples = (cps) => {
+						for (const cp of cps || []) {
+							const m = String(cp).match(/\/delay=['"]?(-?\d+(?:\.\d+)?)['"]?/)
+							if (m) return Math.round(Number(m[1]))
+						}
+						return 0
+					}
+					const frontFilters = frontEntry ? stripDelay(frontEntry.controlPoints) : []
+					let rearFilters, cabinetSamples, rearLabel
+					if (rearEntry && Array.isArray(rearEntry.controlPoints) && rearEntry.controlPoints.length > 0) {
+						rearFilters = stripDelay(rearEntry.controlPoints)
+						cabinetSamples = parseDelaySamples(rearEntry.controlPoints)
+						rearLabel = rearEntry.title || ''
+					} else {
+						const manualMs = Math.max(0, Number(o.ag_manual_rear_delay_ms) || 0)
+						cabinetSamples = Math.round(manualMs * 96)
+						rearFilters = frontFilters
+						rearLabel = `${frontEntry?.title || 'front'} + reversed polarity (manual ${manualMs.toFixed(2)} ms)`
+						self.log?.(
+							'warn',
+							`Loudspeaker ${speakerKey} has no factory Rear Facing preset — rear outputs use manual rear delay ${manualMs.toFixed(2)} ms with polarity reversed automatically.`,
+						)
+					}
+					const rearHasPolarity = rearFilters.some((cp) => /polarity_reversal/.test(String(cp)))
+
+					const n = Math.max(1, Math.min(NUM_OUTPUTS, Number(o.ag_numSubs)))
+					const startFront = Math.max(1, Math.min(NUM_OUTPUTS, Number(o.ag_startCh_front) || 1))
+					const startRear = Math.max(1, Math.min(NUM_OUTPUTS, Number(o.ag_startCh_rear) || 1))
+
+					const toMeters = o.ag_units === 'ft' ? 0.3048 : 1.0
+					const spacingM = Number(o.ag_spacing) * toMeters
+					const arcAngleDeg = Number(o.ag_radius) || 0
+					const roundTo01 = (val) => Math.round(val / 0.01) * 0.01
+
+					// Same arc math as the Array mode
+					const msAtIndex = (i) => {
+						if (arcAngleDeg === 0) return 0
+						const singleSplayDeg = arcAngleDeg / (n - 1)
+						const singleSplayRad = (singleSplayDeg * Math.PI) / 180
+						const AcC_virtual = -spacingM / singleSplayRad
+						const baseAngleDeg = n % 2 === 0 ? singleSplayDeg / 2 : 0
+						const T_base = n % 2 === 0 ? spacingM / 2 : 0
+						const Ty = T_base + (n - 1 - i) * spacingM
+						const angleDeg = baseAngleDeg + (n - 1 - i) * singleSplayDeg
+						const angleRad = (angleDeg * Math.PI) / 180
+						const L = Math.abs(AcC_virtual) * Math.cos(angleRad) + AcC_virtual
+						const M = Math.abs(AcC_virtual) * Math.sin(angleRad)
+						const distance = Math.sqrt(Math.pow(0 - L, 2) + Math.pow(Ty - M, 2))
+						return (distance / c) * 1000
+					}
+					const raw = []
+					for (let i = 0; i < n; i++) raw.push(msAtIndex(i))
+					const minMs = Math.min(...raw)
+					const relative = raw.map((v) => v - minMs)
+					const halfCount = Math.ceil(n / 2)
+					const lastHalf = relative.slice(n - halfCount)
+					const offsetsMs = [...lastHalf]
+					for (let i = halfCount - (n % 2 === 0 ? 1 : 2); i >= 0; i--) offsetsMs.push(lastHalf[i])
+
+					const shouldReset = o.reset_ag === true
+					const channelPrefix = String(o?.ag_channel_prefix || '').trim()
+					const configuredChannels = []
+					// Mono writes only the first half (mirror-symmetric); Stereo writes all.
+					const writeCount = String(o.ag_output_mode) === 'mono' ? Math.ceil(n / 2) : n
+					let writeOffsets = offsetsMs.slice(0, writeCount)
+					if (o.ag_flip_layout === true) writeOffsets = writeOffsets.slice().reverse()
+
+					const resetIfNeeded = (ch) => {
+						if (shouldReset) for (const rc of FACTORY_RESET_COMMANDS) self._cmdSendLine(rc.replace(/\{ch\}/g, ch))
+					}
+					const lines = []
+
+					for (let i = 0; i < writeCount; i++) {
+						const arcMs = roundTo01(writeOffsets[i])
+						const arcSamples = Math.round(arcMs * 96)
+
+						// Front sub: front filters + arc delay
+						const fch = startFront + i
+						if (fch >= 1 && fch <= NUM_OUTPUTS) {
+							resetIfNeeded(fch)
+							if (finalTypeId) self._cmdSendLine(`/processing/output/${fch}/delay_integration/type=${finalTypeId}`)
+							for (const cmd of frontFilters) self._cmdSendLine(cmd.replace(/\{ch\}/g, fch).replace(/\{\}/g, fch))
+							self._cmdSendLine(`/processing/output/${fch}/delay=${arcSamples}`)
+							self._applyOutputDelay(fch, arcSamples)
+							applyChannelName(fch, channelPrefix, `Front ${i + 1}`)
+							configuredChannels.push(fch)
+							lines.push(`Front ch ${fch} = ${arcMs.toFixed(2)} ms`)
+						}
+
+						// Rear sub: rear filters + polarity, arc delay + cabinet gradient delay
+						const rch = startRear + i
+						if (rch >= 1 && rch <= NUM_OUTPUTS) {
+							resetIfNeeded(rch)
+							if (finalTypeId) self._cmdSendLine(`/processing/output/${rch}/delay_integration/type=${finalTypeId}`)
+							for (const cmd of rearFilters) self._cmdSendLine(cmd.replace(/\{ch\}/g, rch).replace(/\{\}/g, rch))
+							if (!rearHasPolarity) self._cmdSendLine(`/processing/output/${rch}/polarity_reversal='true'`)
+							const rearSamples = arcSamples + cabinetSamples
+							self._cmdSendLine(`/processing/output/${rch}/delay=${rearSamples}`)
+							self._applyOutputDelay(rch, rearSamples)
+							applyChannelName(rch, channelPrefix, `Rear ${i + 1}`)
+							configuredChannels.push(rch)
+							lines.push(
+								`Rear ch ${rch} = ${(rearSamples / 96).toFixed(2)} ms (arc ${arcMs.toFixed(2)} + cabinet ${(cabinetSamples / 96).toFixed(2)})`,
+							)
+						}
+					}
+
+					lines.push(...applyLinkGroup(configuredChannels, o?.ag_link_group))
+					self.log?.(
+						'info',
+						[
+							`Array Gradient: ${speakerKey}${finalTypeId ? ' (type ' + finalTypeId + ')' : ''} | ${n}/side, front@${startFront} rear@${startRear}, R=${o.ag_radius}°, c~${c.toFixed(1)} m/s | rear: ${rearLabel}`,
+							...lines,
+						].join(' | '),
+					)
+				} catch (err) {
+					self.log?.('error', `Array Gradient failed: ${err?.message || err}`)
 				}
 			}
 		},
