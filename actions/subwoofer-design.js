@@ -428,6 +428,20 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			},
 			{
 				type: 'dropdown',
+				id: 'array_output_mode',
+				label: 'Output',
+				default: 'stereo',
+				choices: [
+					{ id: 'stereo', label: 'Stereo (full array)' },
+					{ id: 'mono', label: 'Mono (first half only)' },
+				],
+				tooltip:
+					'Stereo writes every sub. Mono writes only the first half (the array is mirror-symmetric, ' +
+					'so e.g. 12 subs → outputs 1–6 with the same delays) for a single-sided deployment.',
+				isVisible: (o) => o.mode === 'array',
+			},
+			{
+				type: 'dropdown',
 				id: 'startCh',
 				label: 'Starting output channel',
 				default: '',
@@ -559,6 +573,20 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				default: 6,
 				min: 1,
 				max: NUM_OUTPUTS,
+				isVisible: (o) => o.mode === 'array_endfire',
+			},
+			{
+				type: 'dropdown',
+				id: 'arrayendfire_output_mode',
+				label: 'Output',
+				default: 'stereo',
+				choices: [
+					{ id: 'stereo', label: 'Stereo (full row)' },
+					{ id: 'mono', label: 'Mono (first half of each row)' },
+				],
+				tooltip:
+					'Stereo writes every sub in each row. Mono writes only the first half of each row (rows are ' +
+					'mirror-symmetric, so e.g. 6 subs/row → first 3) for a single-sided deployment.',
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			{
@@ -1133,8 +1161,11 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const channelPrefix = String(e.options?.array_channel_prefix || '').trim()
 					const configuredChannels = []
 
+					// Mono writes only the first half (the arc is mirror-symmetric); Stereo writes all.
+					const writeCount = String(o.array_output_mode) === 'mono' ? Math.ceil(n / 2) : n
+
 					const lines = []
-					for (let i = 0; i < n; i++) {
+					for (let i = 0; i < writeCount; i++) {
 						const ch = start + i
 
 						// Apply factory reset if checkbox is enabled
@@ -1667,6 +1698,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const channelPrefix = String(o?.arrayendfire_channel_prefix || '').trim()
 					const configuredChannels = []
 
+					// Mono writes only the first half of each row (rows are mirror-symmetric); Stereo writes all.
+					const subsPerRow = String(o.arrayendfire_output_mode) === 'mono' ? Math.ceil(numSubs / 2) : numSubs
+
 					const lines = []
 
 					// Apply combined delays to each row
@@ -1677,7 +1711,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						const endfireMs = (rowIdx * perTapSamples) / 96
 
 						// Process each sub in this row
-						for (let subIdx = 0; subIdx < numSubs; subIdx++) {
+						for (let subIdx = 0; subIdx < subsPerRow; subIdx++) {
 							const ch = rowStartCh + subIdx
 							if (ch > NUM_OUTPUTS) break
 
