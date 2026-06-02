@@ -441,6 +441,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array',
 			},
 			{
+				type: 'checkbox',
+				id: 'array_flip_layout',
+				label: 'Flip layout (start channel = 0 ms)',
+				default: false,
+				tooltip:
+					'Reverses the delay order so the starting channel gets the lowest (0 ms) delay and it ' +
+					'ramps up toward the last (in-to-out instead of out-to-in).',
+				isVisible: (o) => o.mode === 'array' && o.array_output_mode === 'mono',
+			},
+			{
 				type: 'dropdown',
 				id: 'startCh',
 				label: 'Starting output channel',
@@ -588,6 +598,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					'Stereo writes every sub in each row. Mono writes only the first half of each row (rows are ' +
 					'mirror-symmetric, so e.g. 6 subs/row → first 3) for a single-sided deployment.',
 				isVisible: (o) => o.mode === 'array_endfire',
+			},
+			{
+				type: 'checkbox',
+				id: 'arrayendfire_flip_layout',
+				label: 'Flip layout (start channel = 0 ms)',
+				default: false,
+				tooltip:
+					'Reverses the per-row delay order so each row starts at the lowest (0 ms) arc delay and ' +
+					'ramps up (in-to-out instead of out-to-in).',
+				isVisible: (o) => o.mode === 'array_endfire' && o.arrayendfire_output_mode === 'mono',
 			},
 			{
 				type: 'number',
@@ -1163,6 +1183,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 					// Mono writes only the first half (the arc is mirror-symmetric); Stereo writes all.
 					const writeCount = String(o.array_output_mode) === 'mono' ? Math.ceil(n / 2) : n
+					// Optional flip: reverse the written delays so the starting channel gets the lowest (0 ms) delay.
+					let writeOffsets = offsetsMs.slice(0, writeCount)
+					if (o.array_flip_layout === true) writeOffsets = writeOffsets.slice().reverse()
 
 					const lines = []
 					for (let i = 0; i < writeCount; i++) {
@@ -1188,7 +1211,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						}
 
 						// Apply arc delay
-						const targetMs = roundTo01(offsetsMs[i])
+						const targetMs = roundTo01(writeOffsets[i])
 						self._setOutputDelayMs(ch, targetMs)
 						applyChannelName(ch, channelPrefix, `${i + 1}`)
 						configuredChannels.push(ch)
@@ -1700,6 +1723,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 					// Mono writes only the first half of each row (rows are mirror-symmetric); Stereo writes all.
 					const subsPerRow = String(o.arrayendfire_output_mode) === 'mono' ? Math.ceil(numSubs / 2) : numSubs
+					// Optional flip: reverse the per-row arc delays so each row starts at the lowest (0 ms) delay.
+					let arcSeq = arcOffsetsMs.slice(0, subsPerRow)
+					if (o.arrayendfire_flip_layout === true) arcSeq = arcSeq.slice().reverse()
 
 					const lines = []
 
@@ -1716,7 +1742,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							if (ch > NUM_OUTPUTS) break
 
 							// Get the arc delay for this position in the array
-							const arcMs = subIdx < arcOffsetsMs.length ? arcOffsetsMs[subIdx] : 0
+							const arcMs = subIdx < arcSeq.length ? arcSeq[subIdx] : 0
 
 							// Combined delay = end-fire delay + arc delay
 							const combinedMs = roundTo01(endfireMs + arcMs)
