@@ -1381,7 +1381,12 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						// Apply arc delay
 						const targetMs = roundTo01(writeOffsets[i])
 						self._setOutputDelayMs(ch, targetMs)
-						applyChannelName(ch, channelPrefix, `${i + 1}`)
+						// In Mono each output represents a symmetric pair (e.g. 6 subs → "1 & 6", "2 & 5", "3 & 4")
+						applyChannelName(
+							ch,
+							channelPrefix,
+							String(o.array_output_mode) === 'mono' ? `${i + 1} & ${n - i}` : `${i + 1}`,
+						)
 						configuredChannels.push(ch)
 
 						const spLabel =
@@ -1937,7 +1942,10 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							// Apply combined delay
 							self._setOutputDelayMs(ch, combinedMs)
 							const rowNm = rowLabels[rowIdx].charAt(0).toUpperCase() + rowLabels[rowIdx].slice(1)
-							applyChannelName(ch, channelPrefix, `${rowNm} ${subIdx + 1}`)
+							// In Mono each output represents a symmetric pair within the row (e.g. "1 & 6")
+							const subSuffix =
+								String(o.arrayendfire_output_mode) === 'mono' ? `${subIdx + 1} & ${numSubs - subIdx}` : `${subIdx + 1}`
+							applyChannelName(ch, channelPrefix, `${rowNm} ${subSuffix}`)
 							configuredChannels.push(ch)
 
 							const spLabel =
@@ -2083,6 +2091,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					for (let i = 0; i < writeCount; i++) {
 						const arcMs = roundTo01(writeOffsets[i])
 						const arcSamples = Math.round(arcMs * 96)
+						// In Mono each output represents a symmetric pair (e.g. 6 subs → "1 & 6", "2 & 5", "3 & 4")
+						const pairSuffix = String(o.ag_output_mode) === 'mono' ? `${i + 1} & ${n - i}` : `${i + 1}`
 
 						// Front sub: front filters + arc delay
 						const fch = startFront + i
@@ -2092,7 +2102,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							for (const cmd of frontFilters) self._cmdSendLine(cmd.replace(/\{ch\}/g, fch).replace(/\{\}/g, fch))
 							self._cmdSendLine(`/processing/output/${fch}/delay=${arcSamples}`)
 							self._applyOutputDelay(fch, arcSamples)
-							applyChannelName(fch, channelPrefix, `Front ${i + 1}`)
+							applyChannelName(fch, channelPrefix, `Front ${pairSuffix}`)
 							configuredChannels.push(fch)
 							lines.push(`Front ch ${fch} = ${arcMs.toFixed(2)} ms`)
 						}
@@ -2107,7 +2117,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							const rearSamples = arcSamples + cabinetSamples
 							self._cmdSendLine(`/processing/output/${rch}/delay=${rearSamples}`)
 							self._applyOutputDelay(rch, rearSamples)
-							applyChannelName(rch, channelPrefix, `Rear ${i + 1}`)
+							applyChannelName(rch, channelPrefix, `Rear ${pairSuffix}`)
 							configuredChannels.push(rch)
 							lines.push(
 								`Rear ch ${rch} = ${(rearSamples / 96).toFixed(2)} ms (arc ${arcMs.toFixed(2)} + cabinet ${(cabinetSamples / 96).toFixed(2)})`,
