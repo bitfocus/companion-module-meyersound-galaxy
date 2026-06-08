@@ -114,6 +114,69 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		return a === b ? `${a}` : `${a} & ${b}`
 	}
 
+	// Live (UI-evaluated) check mirroring the callback validation: returns true when the current
+	// configuration cannot be applied (channels past the device, or overlapping outputs). Must be
+	// self-contained for Companion's isVisible serialization, so NUM_OUTPUTS is inlined.
+	const configImpossibleVisible = new Function(
+		'options',
+		`if (!options) return false;
+		var N = ${NUM_OUTPUTS};
+		function num(v, d) { var x = Number(v); return isFinite(x) ? x : d; }
+		var mode = options.mode;
+		if (mode === 'array') {
+			if (options.startCh === '' || options.startCh == null) return false;
+			var n = Math.max(1, Math.min(2 * N, num(options.numSubs, 0)));
+			var start = num(options.startCh, 0); if (!start) return false;
+			var wc = String(options.array_output_mode) === 'mono' ? Math.ceil(n / 2) : n;
+			return start + wc - 1 > N;
+		}
+		if (mode === 'endfire') {
+			var depth = Math.max(1, Math.min(8, num(options.depth, 2)));
+			var start = num(options.endfire_first_output, 1);
+			return start + depth - 1 > N;
+		}
+		if (mode === 'array_gradient') {
+			var n = Math.max(1, Math.min(N, num(options.ag_numSubs, 0)));
+			var wc = String(options.ag_output_mode) === 'mono' ? Math.ceil(n / 2) : n;
+			var sf = num(options.ag_startCh_front, 1), sr = num(options.ag_startCh_rear, 1);
+			if (sf + wc - 1 > N || sr + wc - 1 > N) return true;
+			return sf <= sr + wc - 1 && sr <= sf + wc - 1;
+		}
+		if (mode === 'array_endfire') {
+			var numSubs = Math.max(1, Math.min(2 * N, num(options.numSubs_arrayendfire, 0)));
+			var depth = Math.max(2, Math.min(8, num(options.depth_arrayendfire, 2)));
+			var spr = String(options.arrayendfire_output_mode) === 'mono' ? Math.ceil(numSubs / 2) : numSubs;
+			var labels = ['front','second','third','fourth','fifth','sixth','seventh','eighth'];
+			var ranges = [];
+			for (var r = 0; r < depth; r++) {
+				var sc = num(options['startCh_' + labels[r] + '_arrayendfire'], NaN);
+				if (!isFinite(sc) || sc < 1) continue;
+				var last = sc + spr - 1; if (last > N) return true;
+				ranges.push([sc, last]);
+			}
+			for (var i = 0; i < ranges.length; i++) for (var j = i + 1; j < ranges.length; j++)
+				if (ranges[i][0] <= ranges[j][1] && ranges[j][0] <= ranges[i][1]) return true;
+			return false;
+		}
+		if (mode === 'endfire_gradient') {
+			var depth = Math.max(2, Math.min(8, num(options.eg_depth, 2)));
+			var ff = num(options.eg_first_front, 1), fr = num(options.eg_first_rear, 2);
+			var stride = fr - ff === 1 ? 2 : 1;
+			var used = {};
+			for (var t = 0; t < depth; t++) {
+				var pair = [ff + t * stride, fr + t * stride];
+				for (var k = 0; k < 2; k++) {
+					var ch = pair[k];
+					if (ch < 1 || ch > N) return true;
+					if (used[ch]) return true;
+					used[ch] = 1;
+				}
+			}
+			return false;
+		}
+		return false;`,
+	)
+
 	// Validate that a set of contiguous output blocks fit the device and don't overlap.
 	// blocks: [{ label, start, count }]. Returns a human-readable reason string, or null if OK.
 	const validateOutputBlocks = (blocks) => {
@@ -300,6 +363,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 	actions['subassist_combined'] = {
 		name: 'Sub Design Assist',
 		options: [
+			{
+				type: 'static-text',
+				id: 'config_warning',
+				label: '⚠️ Configuration not possible',
+				value:
+					'The current settings would run past the available outputs or overlap. Nothing will be ' +
+					'applied if you press the button — switch Output to Mono, reduce the count, or change the ' +
+					'starting channel(s).',
+				isVisible: configImpossibleVisible,
+			},
 			{
 				type: 'dropdown',
 				id: 'mode',
