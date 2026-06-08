@@ -114,6 +114,24 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		return a === b ? `${a}` : `${a} & ${b}`
 	}
 
+	// Validate that a set of contiguous output blocks fit the device and don't overlap.
+	// blocks: [{ label, start, count }]. Returns a human-readable reason string, or null if OK.
+	const validateOutputBlocks = (blocks) => {
+		const used = new Map() // ch -> block label
+		for (const b of blocks) {
+			if (!b || b.count <= 0) continue
+			const last = b.start + b.count - 1
+			if (b.start < 1 || last > NUM_OUTPUTS) {
+				return `${b.label} would use outputs ${b.start}–${last}, but the device only has ${NUM_OUTPUTS} outputs`
+			}
+			for (let ch = b.start; ch <= last; ch++) {
+				if (used.has(ch)) return `output ${ch} would be set by both ${used.get(ch)} and ${b.label}`
+				used.set(ch, b.label)
+			}
+		}
+		return null
+	}
+
 	// Shared Output Link Group handling for every mode. Given the outputs an action just
 	// configured and the selected link-group option:
 	//   - a real group (1-8) → assign those outputs to it and enable (un-bypass) the group
@@ -1198,11 +1216,20 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				const channelPrefix = String(e.options?.endfire_channel_prefix || '').trim()
 				const configuredChannels = []
 
+				// Reject impossible configurations before touching the device
+				const efBlockErr = validateOutputBlocks([{ label: `${depth} taps`, start: firstOutput, count: depth }])
+				if (efBlockErr) {
+					self.log?.(
+						'warn',
+						`End-Fire not applied: ${efBlockErr}. Reduce the tap count or pick an earlier first output.`,
+					)
+					return
+				}
+
 				const lines = []
 				// One output per tap, auto-filled from the first output: T0 = first, T1 = first+1, …
 				for (let t = 0; t < depth; t++) {
 					const ch = firstOutput + t
-					if (ch > NUM_OUTPUTS) break
 					const targetSamples = baseSamples + t * perTapSamples
 					const targetMs = targetSamples / 96
 
@@ -1365,10 +1392,19 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const writeCount = String(o.array_output_mode) === 'mono' ? Math.ceil(n / 2) : n
 					const writeOffsets = offsetsMs.slice(0, writeCount)
 
+					// Reject impossible configurations before touching the device
+					const blockErr = validateOutputBlocks([{ label: `${n} subs`, start, count: writeCount }])
+					if (blockErr) {
+						self.log?.(
+							'warn',
+							`Array not applied: ${blockErr}. Use Mono (uses half the outputs), reduce the sub count, or pick an earlier starting channel.`,
+						)
+						return
+					}
+
 					const lines = []
 					for (let i = 0; i < writeCount; i++) {
 						const ch = start + i
-						if (ch > NUM_OUTPUTS) break // ran past the available outputs (e.g. 32 subs in Stereo)
 
 						// Apply factory reset if checkbox is enabled
 						if (shouldReset) {
@@ -1671,7 +1707,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 				const inRange = (ch) => Number.isFinite(ch) && ch >= 1 && ch <= NUM_OUTPUTS
 
-				// Warn on computed channels that fall outside the device or collide between roles
+				// Reject impossible configurations before touching the device: any computed output beyond
+				// the device, or a front/rear collision, means nothing is applied.
 				const oob = new Set()
 				const dupes = new Set()
 				const usedRole = new Map()
@@ -1688,14 +1725,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				if (oob.size > 0) {
 					self.log?.(
 						'warn',
-						`End-Fire Gradient: computed outputs ${[...oob].sort((a, b) => a - b).join(', ')} fall outside 1–${NUM_OUTPUTS} and will be skipped — lower the tap count or first outputs.`,
+						`End-Fire Gradient not applied: computed outputs ${[...oob].sort((a, b) => a - b).join(', ')} fall outside 1–${NUM_OUTPUTS}. Lower the tap count or the first front/rear outputs.`,
 					)
+					return
 				}
 				if (dupes.size > 0) {
 					self.log?.(
 						'warn',
-						`End-Fire Gradient: outputs ${[...dupes].sort((a, b) => a - b).join(', ')} collide between front and rear — increase the gap between the first outputs or reduce the tap count.`,
+						`End-Fire Gradient not applied: outputs ${[...dupes].sort((a, b) => a - b).join(', ')} collide between front and rear. Increase the gap between the first outputs or reduce the tap count.`,
 					)
+					return
 				}
 
 				const shouldReset = e.options.reset_eg === true
@@ -1911,6 +1950,23 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const subsPerRow = String(o.arrayendfire_output_mode) === 'mono' ? Math.ceil(numSubs / 2) : numSubs
 					const arcSeq = arcOffsetsMs.slice(0, subsPerRow)
 
+					// Reject impossible configurations (rows past the outputs, or overlapping rows)
+					const aefBlocks = []
+					for (let rowIdx = 0; rowIdx < depth; rowIdx++) {
+						const rsc = rowStartChannels[rowIdx]
+						if (rsc === null) continue
+						const rowNm = rowLabels[rowIdx].charAt(0).toUpperCase() + rowLabels[rowIdx].slice(1)
+						aefBlocks.push({ label: `the ${rowNm} row`, start: rsc, count: subsPerRow })
+					}
+					const aefErr = validateOutputBlocks(aefBlocks)
+					if (aefErr) {
+						self.log?.(
+							'warn',
+							`Array End-Fire not applied: ${aefErr}. Use Mono, reduce subs per row, or change the per-row first outputs so the rows fit and don't overlap.`,
+						)
+						return
+					}
+
 					const lines = []
 
 					// Apply combined delays to each row
@@ -1923,7 +1979,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						// Process each sub in this row
 						for (let subIdx = 0; subIdx < subsPerRow; subIdx++) {
 							const ch = rowStartCh + subIdx
-							if (ch > NUM_OUTPUTS) break
 
 							// Get the arc delay for this position in the array
 							const arcMs = subIdx < arcSeq.length ? arcSeq[subIdx] : 0
@@ -2093,6 +2148,19 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					// Mono writes only the first half (mirror-symmetric); Stereo writes all.
 					const writeCount = String(o.ag_output_mode) === 'mono' ? Math.ceil(n / 2) : n
 					const writeOffsets = offsetsMs.slice(0, writeCount)
+
+					// Reject impossible configurations (front/rear past the outputs, or overlapping blocks)
+					const agErr = validateOutputBlocks([
+						{ label: 'the front outputs', start: startFront, count: writeCount },
+						{ label: 'the rear outputs', start: startRear, count: writeCount },
+					])
+					if (agErr) {
+						self.log?.(
+							'warn',
+							`Array Gradient not applied: ${agErr}. Use Mono, reduce the sub count, or move the front/rear start channels so both blocks fit and don't overlap.`,
+						)
+						return
+					}
 
 					const resetIfNeeded = (ch) => {
 						if (shouldReset) for (const rc of FACTORY_RESET_COMMANDS) self._cmdSendLine(rc.replace(/\{ch\}/g, ch))
