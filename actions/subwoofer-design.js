@@ -441,7 +441,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Number of subs',
 				default: 6,
 				min: 1,
-				max: NUM_OUTPUTS,
+				max: 2 * NUM_OUTPUTS,
+				tooltip: `Up to ${2 * NUM_OUTPUTS} in Mono (uses half the outputs); Stereo is limited to ${NUM_OUTPUTS} outputs.`,
 				isVisible: (o) => o.mode === 'array',
 			},
 			{
@@ -600,7 +601,8 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Number of subs per row',
 				default: 6,
 				min: 1,
-				max: NUM_OUTPUTS,
+				max: 2 * NUM_OUTPUTS,
+				tooltip: `Up to ${2 * NUM_OUTPUTS} per row in Mono (uses half the outputs); outputs are limited to ${NUM_OUTPUTS}.`,
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			{
@@ -1290,7 +1292,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						}
 					}
 
-					const n = Math.max(1, Math.min(NUM_OUTPUTS, Number(o.numSubs)))
+					const n = Math.max(1, Math.min(2 * NUM_OUTPUTS, Number(o.numSubs)))
 					const start = Math.max(1, Math.min(NUM_OUTPUTS, Number(o.startCh)))
 					const end = Math.min(NUM_OUTPUTS, start + n - 1)
 
@@ -1366,6 +1368,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const lines = []
 					for (let i = 0; i < writeCount; i++) {
 						const ch = start + i
+						if (ch > NUM_OUTPUTS) break // ran past the available outputs (e.g. 32 subs in Stereo)
 
 						// Apply factory reset if checkbox is enabled
 						if (shouldReset) {
@@ -1799,7 +1802,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const toMeters = o.units_arrayendfire === 'ft' ? 0.3048 : 1.0
 					const spacingM = Number(o.spacing_arrayendfire) * toMeters
 					const arcAngleDeg = Number(o.radius_arrayendfire) || 0 // Treat "radius" field as arc angle in degrees
-					const numSubs = Math.max(1, Math.min(NUM_OUTPUTS, Number(o.numSubs_arrayendfire)))
+					const numSubs = Math.max(1, Math.min(2 * NUM_OUTPUTS, Number(o.numSubs_arrayendfire)))
 
 					// Get starting channels for each row
 					const rowLabels = ['front', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth']
