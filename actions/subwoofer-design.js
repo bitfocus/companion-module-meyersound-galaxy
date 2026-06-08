@@ -645,75 +645,67 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'startCh_front_arrayendfire',
-				label: 'First output (front row)',
-				default: 1,
-				min: 1,
-				max: NUM_OUTPUTS,
+				label: 'First output (row T0)',
+				default: '1',
+				choices: outputChoicesFriendly,
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'startCh_second_arrayendfire',
-				label: 'First output (second row)',
-				default: 7,
-				min: 1,
-				max: NUM_OUTPUTS,
+				label: 'First output (row T1)',
+				default: '3',
+				choices: outputChoicesFriendly,
 				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 2,
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'startCh_third_arrayendfire',
-				label: 'First output (third row)',
-				default: 13,
-				min: 1,
-				max: NUM_OUTPUTS,
+				label: 'First output (row T2)',
+				default: '5',
+				choices: outputChoicesFriendly,
 				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 3,
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'startCh_fourth_arrayendfire',
-				label: 'First output (fourth row)',
-				default: 19,
-				min: 1,
-				max: NUM_OUTPUTS,
+				label: 'First output (row T3)',
+				default: '7',
+				choices: outputChoicesFriendly,
 				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 4,
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'startCh_fifth_arrayendfire',
-				label: 'First output (fifth row)',
-				default: 25,
-				min: 1,
-				max: NUM_OUTPUTS,
+				label: 'First output (row T4)',
+				default: '9',
+				choices: outputChoicesFriendly,
 				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 5,
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'startCh_sixth_arrayendfire',
-				label: 'First output (sixth row)',
-				default: 31,
-				min: 1,
-				max: NUM_OUTPUTS,
+				label: 'First output (row T5)',
+				default: '11',
+				choices: outputChoicesFriendly,
 				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 6,
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'startCh_seventh_arrayendfire',
-				label: 'First output (seventh row)',
-				default: 37,
-				min: 1,
-				max: NUM_OUTPUTS,
+				label: 'First output (row T6)',
+				default: '13',
+				choices: outputChoicesFriendly,
 				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 7,
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'startCh_eighth_arrayendfire',
-				label: 'First output (eighth row)',
-				default: 43,
-				min: 1,
-				max: NUM_OUTPUTS,
+				label: 'First output (row T7)',
+				default: '15',
+				choices: outputChoicesFriendly,
 				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 8,
 			},
 			{
@@ -1966,8 +1958,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					for (let rowIdx = 0; rowIdx < depth; rowIdx++) {
 						const rsc = rowStartChannels[rowIdx]
 						if (rsc === null) continue
-						const rowNm = rowLabels[rowIdx].charAt(0).toUpperCase() + rowLabels[rowIdx].slice(1)
-						aefBlocks.push({ label: `the ${rowNm} row`, start: rsc, count: subsPerRow })
+						aefBlocks.push({ label: `row T${rowIdx}`, start: rsc, count: subsPerRow })
 					}
 					const aefErr = validateOutputBlocks(aefBlocks)
 					if (aefErr) {
@@ -2021,20 +2012,19 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 							// Apply combined delay
 							self._setOutputDelayMs(ch, combinedMs)
-							const rowNm = rowLabels[rowIdx].charAt(0).toUpperCase() + rowLabels[rowIdx].slice(1)
-							// In Mono each output represents a symmetric pair within the row (e.g. "1 & 6")
+							// Rows are end-fire taps: name them T0, T1, … In Mono each output represents a
+							// symmetric pair within the row (e.g. "1 & 6").
 							const subSuffix =
 								String(o.arrayendfire_output_mode) === 'mono' ? monoPairLabel(subIdx, numSubs) : `${subIdx + 1}`
-							applyChannelName(ch, channelPrefix, `${rowNm} ${subSuffix}`)
+							applyChannelName(ch, channelPrefix, `T${rowIdx} ${subSuffix}`)
 							configuredChannels.push(ch)
 
 							const spLabel =
 								speakerKey && speakerKey !== 'OFF'
 									? ` [${speakerKey}${startingPointTitle ? ': ' + startingPointTitle : ''}]`
 									: ''
-							const rowName = rowLabels[rowIdx].charAt(0).toUpperCase() + rowLabels[rowIdx].slice(1)
 							lines.push(
-								`${rowName} row: ch ${ch} = ${combinedMs.toFixed(2)} ms (EF: ${endfireMs.toFixed(2)} + Arc: ${arcMs.toFixed(2)})${spLabel}`,
+								`T${rowIdx}: ch ${ch} = ${combinedMs.toFixed(2)} ms (EF: ${endfireMs.toFixed(2)} + Arc: ${arcMs.toFixed(2)})${spLabel}`,
 							)
 						}
 					}
