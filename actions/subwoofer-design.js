@@ -33,6 +33,15 @@ function endfirePreview(self) {
 }
 
 /**
+ * Status line for the action: standby until run, then the applied summary or the reason it failed.
+ * @param {Object} self - Module instance
+ * @returns {string} Status text
+ */
+function statusPreview(self) {
+	return self?._subassistStatus || 'Standby — press the button to apply.'
+}
+
+/**
  * Helper function to display arc speed of sound preview
  * @param {Object} self - Module instance
  * @returns {string} Preview text
@@ -114,68 +123,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		return a === b ? `${a}` : `${a} & ${b}`
 	}
 
-	// Live (UI-evaluated) check mirroring the callback validation: returns true when the current
-	// configuration cannot be applied (channels past the device, or overlapping outputs). Must be
-	// self-contained for Companion's isVisible serialization, so NUM_OUTPUTS is inlined.
-	const configImpossibleVisible = new Function(
-		'options',
-		`if (!options) return false;
-		var N = ${NUM_OUTPUTS};
-		function num(v, d) { var x = Number(v); return isFinite(x) ? x : d; }
-		var mode = options.mode;
-		if (mode === 'array') {
-			if (options.startCh === '' || options.startCh == null) return false;
-			var n = Math.max(1, Math.min(2 * N, num(options.numSubs, 0)));
-			var start = num(options.startCh, 0); if (!start) return false;
-			var wc = String(options.array_output_mode) === 'mono' ? Math.ceil(n / 2) : n;
-			return start + wc - 1 > N;
-		}
-		if (mode === 'endfire') {
-			var depth = Math.max(1, Math.min(8, num(options.depth, 2)));
-			var start = num(options.endfire_first_output, 1);
-			return start + depth - 1 > N;
-		}
-		if (mode === 'array_gradient') {
-			var n = Math.max(1, Math.min(N, num(options.ag_numSubs, 0)));
-			var wc = String(options.ag_output_mode) === 'mono' ? Math.ceil(n / 2) : n;
-			var sf = num(options.ag_startCh_front, 1), sr = num(options.ag_startCh_rear, 1);
-			if (sf + wc - 1 > N || sr + wc - 1 > N) return true;
-			return sf <= sr + wc - 1 && sr <= sf + wc - 1;
-		}
-		if (mode === 'array_endfire') {
-			var numSubs = Math.max(1, Math.min(2 * N, num(options.numSubs_arrayendfire, 0)));
-			var depth = Math.max(2, Math.min(8, num(options.depth_arrayendfire, 2)));
-			var spr = String(options.arrayendfire_output_mode) === 'mono' ? Math.ceil(numSubs / 2) : numSubs;
-			var labels = ['front','second','third','fourth','fifth','sixth','seventh','eighth'];
-			var ranges = [];
-			for (var r = 0; r < depth; r++) {
-				var sc = num(options['startCh_' + labels[r] + '_arrayendfire'], NaN);
-				if (!isFinite(sc) || sc < 1) continue;
-				var last = sc + spr - 1; if (last > N) return true;
-				ranges.push([sc, last]);
-			}
-			for (var i = 0; i < ranges.length; i++) for (var j = i + 1; j < ranges.length; j++)
-				if (ranges[i][0] <= ranges[j][1] && ranges[j][0] <= ranges[i][1]) return true;
-			return false;
-		}
-		if (mode === 'endfire_gradient') {
-			var depth = Math.max(2, Math.min(8, num(options.eg_depth, 2)));
-			var ff = num(options.eg_first_front, 1), fr = num(options.eg_first_rear, 2);
-			var stride = fr - ff === 1 ? 2 : 1;
-			var used = {};
-			for (var t = 0; t < depth; t++) {
-				var pair = [ff + t * stride, fr + t * stride];
-				for (var k = 0; k < 2; k++) {
-					var ch = pair[k];
-					if (ch < 1 || ch > N) return true;
-					if (used[ch]) return true;
-					used[ch] = 1;
-				}
-			}
-			return false;
-		}
-		return false;`,
-	)
+	// Update the action's Status line (standby / applied summary / reason it failed) and re-render.
+	const setStatus = (msg) => {
+		self._subassistStatus = msg
+		try {
+			self.updateActions?.()
+		} catch {}
+	}
 
 	// Validate that a set of contiguous output blocks fit the device and don't overlap.
 	// blocks: [{ label, start, count }]. Returns a human-readable reason string, or null if OK.
@@ -365,13 +319,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		options: [
 			{
 				type: 'static-text',
-				id: 'config_warning',
-				label: '⚠️ Configuration not possible',
-				value:
-					'The current settings would run past the available outputs or overlap. Nothing will be ' +
-					'applied if you press the button — switch Output to Mono, reduce the count, or change the ' +
-					'starting channel(s).',
-				isVisible: configImpossibleVisible,
+				id: 'status',
+				label: 'Status',
+				value: statusPreview(self),
 			},
 			{
 				type: 'dropdown',
@@ -553,7 +503,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			{
 				type: 'checkbox',
 				id: 'array_flip_layout',
-				label: 'Flip layout (start channel = 0 ms)',
+				label: 'Flip delay order',
 				default: false,
 				tooltip:
 					'Inverts the arc so the starting/edge channels get 0 ms and the center gets the max delay ' +
@@ -713,7 +663,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			{
 				type: 'checkbox',
 				id: 'arrayendfire_flip_layout',
-				label: 'Flip layout (start channel = 0 ms)',
+				label: 'Flip delay order',
 				default: false,
 				tooltip:
 					'Inverts each row’s arc so the edge/start subs get 0 ms and the center gets the max arc ' +
@@ -1126,7 +1076,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			{
 				type: 'checkbox',
 				id: 'ag_flip_layout',
-				label: 'Flip layout (start channel = 0 ms)',
+				label: 'Flip delay order',
 				default: false,
 				tooltip:
 					'Inverts the arc so the starting/edge channels get 0 ms and the center gets the max arc ' +
@@ -1292,10 +1242,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				// Reject impossible configurations before touching the device
 				const efBlockErr = validateOutputBlocks([{ label: `${depth} taps`, start: firstOutput, count: depth }])
 				if (efBlockErr) {
-					self.log?.(
-						'warn',
-						`End-Fire not applied: ${efBlockErr}. Reduce the tap count or pick an earlier first output.`,
-					)
+					const msg = `Not applied — ${efBlockErr}. Reduce the tap count or pick an earlier first output.`
+					self.log?.('warn', msg)
+					setStatus(`⚠️ ${msg}`)
 					return
 				}
 
@@ -1339,6 +1288,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						].join(' | '),
 					)
 				}
+				setStatus(
+					`✅ Applied — End-Fire: ${configuredChannels.length} output(s), ${depth} taps from output ${firstOutput}.`,
+				)
 
 				try {
 					self.updateActions?.()
@@ -1364,6 +1316,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							'info',
 							`Arc preview: c~${c.toFixed(1)} m/s (${c_fps.toFixed(1)} ft/s) at ${T.toFixed(1)} °C (${T_F.toFixed(1)} °F)`,
 						)
+						setStatus('Pick a starting output channel to apply.')
 						return
 					}
 
@@ -1468,10 +1421,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					// Reject impossible configurations before touching the device
 					const blockErr = validateOutputBlocks([{ label: `${n} subs`, start, count: writeCount }])
 					if (blockErr) {
-						self.log?.(
-							'warn',
-							`Array not applied: ${blockErr}. Use Mono (uses half the outputs), reduce the sub count, or pick an earlier starting channel.`,
-						)
+						const msg = `Not applied — ${blockErr}. Use Mono (uses half the outputs), reduce the sub count, or pick an earlier starting channel.`
+						self.log?.('warn', msg)
+						setStatus(`⚠️ ${msg}`)
 						return
 					}
 
@@ -1526,14 +1478,19 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							...lines,
 						].join(' | '),
 					)
+					setStatus(
+						`✅ Applied — Array: ${configuredChannels.length} output(s)${String(o.array_output_mode) === 'mono' ? ' (Mono)' : ''}, ${n} subs, ${o.radius}° arc.`,
+					)
 				} catch (err) {
 					self.log?.('error', `Arc delay failed: ${err?.message || err}`)
+					setStatus(`⚠️ Array failed: ${err?.message || err}`)
 				}
 			} else if (mode === 'gradient') {
 				// Execute Gradient logic
 				const speakerKey = String(e.options?.gradient_speaker || '')
 				if (!speakerKey || speakerKey === 'OFF' || speakerKey === '') {
 					self.log?.('warn', 'Please select a loudspeaker for Gradient mode')
+					setStatus('Select a loudspeaker to apply.')
 					return
 				}
 
@@ -1549,6 +1506,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 				if (!typeId) {
 					self.log?.('warn', `Invalid product integration selection for speaker ${speakerKey}`)
+					setStatus(`⚠️ Not applied — invalid product integration for ${speakerKey}.`)
 					return
 				}
 
@@ -1668,8 +1626,12 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 				if (lines.length > 0) {
 					self.log?.('info', [`Gradient: ${speakerKey} (type ${finalTypeId})`, ...lines].join(' | '))
+					setStatus(
+						`✅ Applied — Gradient: ${speakerKey}, ${frontOutputs.length} front + ${reversedOutputs.length} reversed output(s).`,
+					)
 				} else {
 					self.log?.('warn', 'No outputs selected for Gradient mode')
+					setStatus('Select Front and/or Reversed outputs to apply.')
 				}
 			} else if (mode === 'endfire_gradient') {
 				// Execute End-Fire Gradient logic: a cardioid gradient pair (front-facing +
@@ -1677,6 +1639,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				const speakerKey = String(e.options?.eg_speaker || '')
 				if (!speakerKey || speakerKey === 'OFF' || speakerKey === '') {
 					self.log?.('warn', 'Please select a loudspeaker for End-Fire Gradient mode')
+					setStatus('Select a loudspeaker to apply.')
 					return
 				}
 
@@ -1692,6 +1655,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				}
 				if (!typeId) {
 					self.log?.('warn', `Invalid product integration selection for speaker ${speakerKey}`)
+					setStatus(`⚠️ Not applied — invalid product integration for ${speakerKey}.`)
 					return
 				}
 				const finalTypeId = String(typeId)
@@ -1796,17 +1760,15 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					}
 				}
 				if (oob.size > 0) {
-					self.log?.(
-						'warn',
-						`End-Fire Gradient not applied: computed outputs ${[...oob].sort((a, b) => a - b).join(', ')} fall outside 1–${NUM_OUTPUTS}. Lower the tap count or the first front/rear outputs.`,
-					)
+					const msg = `Not applied — computed outputs ${[...oob].sort((a, b) => a - b).join(', ')} fall outside 1–${NUM_OUTPUTS}. Lower the tap count or the first front/rear outputs.`
+					self.log?.('warn', msg)
+					setStatus(`⚠️ ${msg}`)
 					return
 				}
 				if (dupes.size > 0) {
-					self.log?.(
-						'warn',
-						`End-Fire Gradient not applied: outputs ${[...dupes].sort((a, b) => a - b).join(', ')} collide between front and rear. Increase the gap between the first outputs or reduce the tap count.`,
-					)
+					const msg = `Not applied — outputs ${[...dupes].sort((a, b) => a - b).join(', ')} collide between front and rear. Increase the gap between the first outputs or reduce the tap count.`
+					self.log?.('warn', msg)
+					setStatus(`⚠️ ${msg}`)
 					return
 				}
 
@@ -1879,8 +1841,12 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							...lines,
 						].join(' | '),
 					)
+					setStatus(
+						`✅ Applied — End-Fire Gradient: ${speakerKey}, ${depth} taps, ${configuredChannels.length} output(s).`,
+					)
 				} else {
 					self.log?.('warn', 'No outputs selected for End-Fire Gradient mode')
+					setStatus('No outputs configured to apply.')
 				}
 			} else if (mode === 'array_endfire') {
 				// Execute Array End-Fire logic (combines end-fire and array)
@@ -2033,10 +1999,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					}
 					const aefErr = validateOutputBlocks(aefBlocks)
 					if (aefErr) {
-						self.log?.(
-							'warn',
-							`Array End-Fire not applied: ${aefErr}. Use Mono, reduce subs per row, or change the per-row first outputs so the rows fit and don't overlap.`,
-						)
+						const msg = `Not applied — ${aefErr}. Use Mono, reduce subs per row, or change the per-row first outputs so the rows fit and don't overlap.`
+						self.log?.('warn', msg)
+						setStatus(`⚠️ ${msg}`)
 						return
 					}
 
@@ -2111,11 +2076,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 								...lines,
 							].join(' | '),
 						)
+						setStatus(`✅ Applied — Array End-Fire: ${depth} rows, ${configuredChannels.length} output(s).`)
 					} else {
 						self.log?.('warn', 'No rows configured for Array End-Fire mode')
+						setStatus('No rows configured to apply.')
 					}
 				} catch (err) {
 					self.log?.('error', `Array End-Fire failed: ${err?.message || err}`)
+					setStatus(`⚠️ Array End-Fire failed: ${err?.message || err}`)
 				}
 			} else if (mode === 'array_gradient') {
 				// Array Gradient: a symmetric arc of front-facing subs (like Array) plus one rear-facing
@@ -2126,6 +2094,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const speakerKey = String(o?.ag_speaker || '')
 					if (!speakerKey || speakerKey === 'OFF' || speakerKey === '') {
 						self.log?.('warn', 'Please select a loudspeaker for Array Gradient mode')
+						setStatus('Select a loudspeaker to apply.')
 						return
 					}
 
@@ -2228,10 +2197,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						{ label: 'the rear outputs', start: startRear, count: writeCount },
 					])
 					if (agErr) {
-						self.log?.(
-							'warn',
-							`Array Gradient not applied: ${agErr}. Use Mono, reduce the sub count, or move the front/rear start channels so both blocks fit and don't overlap.`,
-						)
+						const msg = `Not applied — ${agErr}. Use Mono, reduce the sub count, or move the front/rear start channels so both blocks fit and don't overlap.`
+						self.log?.('warn', msg)
+						setStatus(`⚠️ ${msg}`)
 						return
 					}
 
@@ -2285,8 +2253,10 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							...lines,
 						].join(' | '),
 					)
+					setStatus(`✅ Applied — Array Gradient: ${speakerKey}, ${n}/side, ${configuredChannels.length} output(s).`)
 				} catch (err) {
 					self.log?.('error', `Array Gradient failed: ${err?.message || err}`)
+					setStatus(`⚠️ Array Gradient failed: ${err?.message || err}`)
 				}
 			}
 		},
