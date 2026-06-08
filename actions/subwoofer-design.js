@@ -456,9 +456,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Flip layout (start channel = 0 ms)',
 				default: false,
 				tooltip:
-					'Reverses the delay order so the starting channel gets the lowest (0 ms) delay and it ' +
-					'ramps up toward the last (in-to-out instead of out-to-in).',
-				isVisible: (o) => o.mode === 'array' && o.array_output_mode === 'mono',
+					'Inverts the arc so the starting/edge channels get 0 ms and the center gets the max delay ' +
+					'(in-to-out instead of out-to-in). In Mono this puts 0 ms at the starting channel.',
+				isVisible: (o) => o.mode === 'array',
 			},
 			{
 				type: 'dropdown',
@@ -615,9 +615,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Flip layout (start channel = 0 ms)',
 				default: false,
 				tooltip:
-					'Reverses the per-row delay order so each row starts at the lowest (0 ms) arc delay and ' +
-					'ramps up (in-to-out instead of out-to-in).',
-				isVisible: (o) => o.mode === 'array_endfire' && o.arrayendfire_output_mode === 'mono',
+					'Inverts each row’s arc so the edge/start subs get 0 ms and the center gets the max arc ' +
+					'delay (in-to-out instead of out-to-in). In Mono this puts 0 ms at the start of each row.',
+				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			{
 				type: 'number',
@@ -1028,9 +1028,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Flip layout (start channel = 0 ms)',
 				default: false,
 				tooltip:
-					'Reverses the arc delay order so the starting channel gets the lowest (0 ms) arc delay and ' +
-					'ramps up (in-to-out instead of out-to-in).',
-				isVisible: (o) => o.mode === 'array_gradient' && o.ag_output_mode === 'mono',
+					'Inverts the arc so the starting/edge channels get 0 ms and the center gets the max arc ' +
+					'delay (in-to-out instead of out-to-in). In Mono this puts 0 ms at the starting channel.',
+				isVisible: (o) => o.mode === 'array_gradient',
 			},
 			{
 				type: 'dropdown',
@@ -1333,15 +1333,17 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const minMs = Math.min(...raw)
 					const relative = raw.map((v) => v - minMs)
 
-					// Create symmetric delays: arc is symmetric, so we mirror the second half
-					// Take last half (which has minimum delays) and create: lastHalf + reverse(lastHalf)
+					// Create symmetric delays: arc is symmetric, so we mirror the second half.
+					// Flip inverts the curve (edges = 0 ms, center = max) by building from the reversed
+					// half; this preserves the real arc values and puts 0 ms at the start channel.
 					const halfCount = Math.ceil(n / 2)
-					const lastHalf = relative.slice(n - halfCount)
+					let baseHalf = relative.slice(n - halfCount)
+					if (o.array_flip_layout === true) baseHalf = baseHalf.slice().reverse()
 
-					const offsetsMs = [...lastHalf]
+					const offsetsMs = [...baseHalf]
 					// Append reverse, skipping last element for even count (to avoid duplicating center)
 					for (let i = halfCount - (n % 2 === 0 ? 1 : 2); i >= 0; i--) {
-						offsetsMs.push(lastHalf[i])
+						offsetsMs.push(baseHalf[i])
 					}
 
 					// Check if factory reset is enabled
@@ -1351,9 +1353,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 
 					// Mono writes only the first half (the arc is mirror-symmetric); Stereo writes all.
 					const writeCount = String(o.array_output_mode) === 'mono' ? Math.ceil(n / 2) : n
-					// Optional flip: reverse the written delays so the starting channel gets the lowest (0 ms) delay.
-					let writeOffsets = offsetsMs.slice(0, writeCount)
-					if (o.array_flip_layout === true) writeOffsets = writeOffsets.slice().reverse()
+					const writeOffsets = offsetsMs.slice(0, writeCount)
 
 					const lines = []
 					for (let i = 0; i < writeCount; i++) {
@@ -1848,15 +1848,16 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const minMs = Math.min(...raw)
 					const relative = raw.map((v) => v - minMs)
 
-					// Create symmetric delays: arc is symmetric, so we mirror the second half
-					// Take last half (which has minimum delays) and create: lastHalf + reverse(lastHalf)
+					// Create symmetric delays: arc is symmetric, so we mirror the second half.
+					// Flip inverts the curve (edge subs = 0 ms, center = max) by building from the reversed half.
 					const halfCount = Math.ceil(numSubs / 2)
-					const lastHalf = relative.slice(numSubs - halfCount)
+					let baseHalf = relative.slice(numSubs - halfCount)
+					if (o.arrayendfire_flip_layout === true) baseHalf = baseHalf.slice().reverse()
 
-					const arcOffsetsMs = [...lastHalf]
+					const arcOffsetsMs = [...baseHalf]
 					// Append reverse, skipping last element for even count (to avoid duplicating center)
 					for (let i = halfCount - (numSubs % 2 === 0 ? 1 : 2); i >= 0; i--) {
-						arcOffsetsMs.push(lastHalf[i])
+						arcOffsetsMs.push(baseHalf[i])
 					}
 
 					// Product integration: delay-integration type from the selected Phase Curve, and the
@@ -1890,10 +1891,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					const configuredChannels = []
 
 					// Mono writes only the first half of each row (rows are mirror-symmetric); Stereo writes all.
+					// (Flip is already baked into arcOffsetsMs above.)
 					const subsPerRow = String(o.arrayendfire_output_mode) === 'mono' ? Math.ceil(numSubs / 2) : numSubs
-					// Optional flip: reverse the per-row arc delays so each row starts at the lowest (0 ms) delay.
-					let arcSeq = arcOffsetsMs.slice(0, subsPerRow)
-					if (o.arrayendfire_flip_layout === true) arcSeq = arcSeq.slice().reverse()
+					const arcSeq = arcOffsetsMs.slice(0, subsPerRow)
 
 					const lines = []
 
@@ -2061,18 +2061,19 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					for (let i = 0; i < n; i++) raw.push(msAtIndex(i))
 					const minMs = Math.min(...raw)
 					const relative = raw.map((v) => v - minMs)
+					// Flip inverts the curve (edges = 0 ms, center = max) by building from the reversed half.
 					const halfCount = Math.ceil(n / 2)
-					const lastHalf = relative.slice(n - halfCount)
-					const offsetsMs = [...lastHalf]
-					for (let i = halfCount - (n % 2 === 0 ? 1 : 2); i >= 0; i--) offsetsMs.push(lastHalf[i])
+					let baseHalf = relative.slice(n - halfCount)
+					if (o.ag_flip_layout === true) baseHalf = baseHalf.slice().reverse()
+					const offsetsMs = [...baseHalf]
+					for (let i = halfCount - (n % 2 === 0 ? 1 : 2); i >= 0; i--) offsetsMs.push(baseHalf[i])
 
 					const shouldReset = o.reset_ag === true
 					const channelPrefix = String(o?.ag_channel_prefix || '').trim()
 					const configuredChannels = []
 					// Mono writes only the first half (mirror-symmetric); Stereo writes all.
 					const writeCount = String(o.ag_output_mode) === 'mono' ? Math.ceil(n / 2) : n
-					let writeOffsets = offsetsMs.slice(0, writeCount)
-					if (o.ag_flip_layout === true) writeOffsets = writeOffsets.slice().reverse()
+					const writeOffsets = offsetsMs.slice(0, writeCount)
 
 					const resetIfNeeded = (ch) => {
 						if (shouldReset) for (const rc of FACTORY_RESET_COMMANDS) self._cmdSendLine(rc.replace(/\{ch\}/g, ch))
