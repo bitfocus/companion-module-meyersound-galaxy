@@ -18,21 +18,6 @@ function subassistPreview(self) {
 }
 
 /**
- * Helper function to display end-fire speed of sound preview
- * @param {Object} self - Module instance
- * @returns {string} Preview text
- */
-function endfirePreview(self) {
-	const d = self?._subassist || null
-	if (!d || typeof d.c !== 'number' || typeof d.T !== 'number') return '-- Run once to update preview --'
-	const c_mps = d.c
-	const c_fps = c_mps * 3.28084
-	const T_C = d.T
-	const T_F = (T_C * 9) / 5 + 32
-	return `c ≈ ${c_mps.toFixed(1)} m/s (${c_fps.toFixed(1)} ft/s) at ${T_C.toFixed(1)} °C (${T_F.toFixed(1)} °F)`
-}
-
-/**
  * Status line for the action: standby until run, then the applied summary or the reason it failed.
  * @param {Object} self - Module instance
  * @returns {string} Status text
@@ -42,18 +27,22 @@ function statusPreview(self) {
 }
 
 /**
- * Helper function to display arc speed of sound preview
- * @param {Object} self - Module instance
- * @returns {string} Preview text
+ * Build a " Try: a; b." hint string from a list of applicable remedies (falsy entries dropped).
+ * @param {Array<string|false>} hints
+ * @returns {string}
  */
-function arcPreview(self) {
-	const d = self?._arcassist
-	if (!d || typeof d.c !== 'number') return '-- Run once to update preview --'
-	const c_mps = d.c
-	const c_fps = c_mps * 3.28084
-	const T_C = d.T
-	const T_F = (T_C * 9) / 5 + 32
-	return `c ≈ ${c_mps.toFixed(1)} m/s (${c_fps.toFixed(1)} ft/s) at ${T_C.toFixed(1)} °C (${T_F.toFixed(1)} °F)`
+function fixHint(hints) {
+	const list = (hints || []).filter(Boolean)
+	return list.length ? ` Try: ${list.join('; ')}.` : ''
+}
+
+/**
+ * Result line for the standalone Speed of Sound / Spacing calculator action (no device effect).
+ * @param {Object} self - Module instance
+ * @returns {string}
+ */
+function calcResultPreview(self) {
+	return self?._calcResult || '-- Press the button to calculate --'
 }
 
 /**
@@ -368,13 +357,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			},
 			{
 				type: 'static-text',
-				id: 'speed_preview',
-				label: 'Speed of sound',
-				value: endfirePreview(self),
-				isVisible: (o) => o.mode === 'endfire',
-			},
-			{
-				type: 'static-text',
 				id: 'preview',
 				label: 'Recommended spacing',
 				value: subassistPreview(self),
@@ -469,13 +451,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array',
 			},
 			...arrayPhaseOptionDefs,
-			{
-				type: 'static-text',
-				id: 'arc_preview',
-				label: 'Speed of sound',
-				value: arcPreview(self),
-				isVisible: (o) => o.mode === 'array',
-			},
 			{
 				type: 'number',
 				id: 'numSubs',
@@ -602,13 +577,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				isVisible: (o) => o.mode === 'array_endfire',
 			},
 			...arrayendfirePhaseOptionDefs,
-			{
-				type: 'static-text',
-				id: 'arrayendfire_speed_preview',
-				label: 'Speed of sound',
-				value: arcPreview(self),
-				isVisible: (o) => o.mode === 'array_endfire',
-			},
 			{
 				type: 'static-text',
 				id: 'arrayendfire_spacing_preview',
@@ -916,13 +884,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 			},
 			{
 				type: 'static-text',
-				id: 'eg_speed_preview',
-				label: 'Speed of sound',
-				value: endfirePreview(self),
-				isVisible: (o) => o.mode === 'endfire_gradient',
-			},
-			{
-				type: 'static-text',
 				id: 'eg_spacing_preview',
 				label: 'Recommended tap spacing (from target freq + temp)',
 				value: subassistPreview(self),
@@ -1042,13 +1003,6 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				max: 100,
 				step: 0.01,
 				isVisible: agNoRearVisible,
-			},
-			{
-				type: 'static-text',
-				id: 'ag_speed_preview',
-				label: 'Speed of sound',
-				value: arcPreview(self),
-				isVisible: (o) => o.mode === 'array_gradient',
 			},
 			{
 				type: 'number',
@@ -1242,7 +1196,10 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				// Reject impossible configurations before touching the device
 				const efBlockErr = validateOutputBlocks([{ label: `${depth} taps`, start: firstOutput, count: depth }])
 				if (efBlockErr) {
-					const msg = `Not applied — ${efBlockErr}. Reduce the tap count or pick an earlier first output.`
+					const msg = `Not applied — ${efBlockErr}.${fixHint([
+						depth > 1 && 'reduce the tap count',
+						firstOutput > 1 && 'start at an earlier output',
+					])}`
 					self.log?.('warn', msg)
 					setStatus(`⚠️ ${msg}`)
 					return
@@ -1421,7 +1378,11 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					// Reject impossible configurations before touching the device
 					const blockErr = validateOutputBlocks([{ label: `${n} subs`, start, count: writeCount }])
 					if (blockErr) {
-						const msg = `Not applied — ${blockErr}. Use Mono (uses half the outputs), reduce the sub count, or pick an earlier starting channel.`
+						const msg = `Not applied — ${blockErr}.${fixHint([
+							String(o.array_output_mode) !== 'mono' && 'switch Output to Mono (uses half the outputs)',
+							start > 1 && 'start at an earlier output',
+							n > 1 && 'reduce the number of subs',
+						])}`
 						self.log?.('warn', msg)
 						setStatus(`⚠️ ${msg}`)
 						return
@@ -1760,7 +1721,12 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					}
 				}
 				if (oob.size > 0) {
-					const msg = `Not applied — computed outputs ${[...oob].sort((a, b) => a - b).join(', ')} fall outside 1–${NUM_OUTPUTS}. Lower the tap count or the first front/rear outputs.`
+					const msg = `Not applied — computed outputs ${[...oob].sort((a, b) => a - b).join(', ')} fall outside 1–${NUM_OUTPUTS}.${fixHint(
+						[
+							depth > 1 && 'reduce the tap count',
+							(firstFront > 1 || firstRear > 1) && 'lower the first front/rear outputs',
+						],
+					)}`
 					self.log?.('warn', msg)
 					setStatus(`⚠️ ${msg}`)
 					return
@@ -1999,7 +1965,11 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					}
 					const aefErr = validateOutputBlocks(aefBlocks)
 					if (aefErr) {
-						const msg = `Not applied — ${aefErr}. Use Mono, reduce subs per row, or change the per-row first outputs so the rows fit and don't overlap.`
+						const msg = `Not applied — ${aefErr}.${fixHint([
+							String(o.arrayendfire_output_mode) !== 'mono' && 'switch Output to Mono',
+							numSubs > 1 && 'reduce subs per row',
+							'space the per-row first outputs so rows fit and don’t overlap',
+						])}`
 						self.log?.('warn', msg)
 						setStatus(`⚠️ ${msg}`)
 						return
@@ -2197,7 +2167,11 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						{ label: 'the rear outputs', start: startRear, count: writeCount },
 					])
 					if (agErr) {
-						const msg = `Not applied — ${agErr}. Use Mono, reduce the sub count, or move the front/rear start channels so both blocks fit and don't overlap.`
+						const msg = `Not applied — ${agErr}.${fixHint([
+							String(o.ag_output_mode) !== 'mono' && 'switch Output to Mono',
+							n > 1 && 'reduce the number of subs',
+							'move the front/rear start channels so both blocks fit and don’t overlap',
+						])}`
 						self.log?.('warn', msg)
 						setStatus(`⚠️ ${msg}`)
 						return
@@ -2259,6 +2233,73 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					setStatus(`⚠️ Array Gradient failed: ${err?.message || err}`)
 				}
 			}
+		},
+	}
+
+	// ===== Standalone calculator (no effect on the Galaxy) =====
+	actions['subassist_calculator'] = {
+		name: 'Speed of Sound / Spacing Calculator',
+		options: [
+			{
+				type: 'static-text',
+				id: 'calc_info',
+				label: 'Calculator',
+				value:
+					'Computes the speed of sound and the recommended ¼-wavelength sub spacing. Has NO effect ' +
+					'on the Galaxy — press the button to update the result below.',
+			},
+			{
+				type: 'number',
+				id: 'calc_temp',
+				label: 'Air temperature',
+				default: 20,
+				min: -40,
+				max: 140,
+				step: 0.1,
+			},
+			{
+				type: 'dropdown',
+				id: 'calc_tempUnit',
+				label: 'Temperature unit',
+				default: 'C',
+				choices: [
+					{ id: 'C', label: '°C' },
+					{ id: 'F', label: '°F' },
+				],
+			},
+			{
+				type: 'number',
+				id: 'calc_freq',
+				label: 'Target frequency (Hz)',
+				default: 80,
+				min: 1,
+				max: 200,
+				step: 1,
+			},
+			{
+				type: 'static-text',
+				id: 'calc_result',
+				label: 'Result',
+				value: calcResultPreview(self),
+			},
+		],
+		callback: (e) => {
+			const unitIn = e.options.calc_tempUnit === 'F' ? 'F' : 'C'
+			let T = Number.isFinite(Number(e.options.calc_temp)) ? Number(e.options.calc_temp) : 20
+			if (unitIn === 'F') T = ((T - 32) * 5) / 9
+			const c = speedOfSound_mps(T)
+			const c_fps = c * 3.28084
+			const T_F = (T * 9) / 5 + 32
+			const f = Math.max(1e-6, Number(e.options.calc_freq) || 80)
+			const spacing_m = c / (4 * f)
+			const spacing_ft = spacing_m * 3.28084
+			self._calcResult =
+				`c ≈ ${c.toFixed(1)} m/s (${c_fps.toFixed(1)} ft/s) at ${T.toFixed(1)} °C (${T_F.toFixed(1)} °F)` +
+				`  ·  ¼λ @ ${f} Hz ≈ ${spacing_m.toFixed(3)} m (${spacing_ft.toFixed(2)} ft)`
+			self.log?.('info', `Calculator — ${self._calcResult}`)
+			try {
+				self.updateActions?.()
+			} catch {}
 		},
 	}
 }
