@@ -106,6 +106,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		self.setVariableValues?.({ [`output_${ch}_name`]: channelName })
 	}
 
+	// Mono symmetric-pair label for output index i of a `total`-sub array: "1 & 6", "2 & 5", …
+	// For an odd count the centre sub pairs with itself, so it's labelled with a single number.
+	const monoPairLabel = (i, total) => {
+		const a = i + 1
+		const b = total - i
+		return a === b ? `${a}` : `${a} & ${b}`
+	}
+
 	// Shared Output Link Group handling for every mode. Given the outputs an action just
 	// configured and the selected link-group option:
 	//   - a real group (1-8) → assign those outputs to it and enable (un-bypass) the group
@@ -1385,7 +1393,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						applyChannelName(
 							ch,
 							channelPrefix,
-							String(o.array_output_mode) === 'mono' ? `${i + 1} & ${n - i}` : `${i + 1}`,
+							String(o.array_output_mode) === 'mono' ? monoPairLabel(i, n) : `${i + 1}`,
 						)
 						configuredChannels.push(ch)
 
@@ -1944,7 +1952,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 							const rowNm = rowLabels[rowIdx].charAt(0).toUpperCase() + rowLabels[rowIdx].slice(1)
 							// In Mono each output represents a symmetric pair within the row (e.g. "1 & 6")
 							const subSuffix =
-								String(o.arrayendfire_output_mode) === 'mono' ? `${subIdx + 1} & ${numSubs - subIdx}` : `${subIdx + 1}`
+								String(o.arrayendfire_output_mode) === 'mono' ? monoPairLabel(subIdx, numSubs) : `${subIdx + 1}`
 							applyChannelName(ch, channelPrefix, `${rowNm} ${subSuffix}`)
 							configuredChannels.push(ch)
 
@@ -2092,7 +2100,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						const arcMs = roundTo01(writeOffsets[i])
 						const arcSamples = Math.round(arcMs * 96)
 						// In Mono each output represents a symmetric pair (e.g. 6 subs → "1 & 6", "2 & 5", "3 & 4")
-						const pairSuffix = String(o.ag_output_mode) === 'mono' ? `${i + 1} & ${n - i}` : `${i + 1}`
+						const pairSuffix = String(o.ag_output_mode) === 'mono' ? monoPairLabel(i, n) : `${i + 1}`
 
 						// Front sub: front filters + arc delay
 						const fch = startFront + i
