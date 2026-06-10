@@ -202,18 +202,9 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 	// Speaker keys that have a Front Facing preset but no Rear Facing one, inlined as a JSON
 	// literal so the isVisible functions below stay self-contained when Companion serializes them.
 	const noRearFacingJson = JSON.stringify(noRearFacingSpeakers)
-	const egNoRearVisible = new Function(
-		'options',
-		`return !!options && options.mode === 'endfire_gradient' && ${noRearFacingJson}.includes(options.eg_speaker)`,
-	)
-	const gradientNoRearVisible = new Function(
-		'options',
-		`return !!options && options.mode === 'gradient' && ${noRearFacingJson}.includes(options.gradient_speaker)`,
-	)
-	const agNoRearVisible = new Function(
-		'options',
-		`return !!options && options.mode === 'array_gradient' && ${noRearFacingJson}.includes(options.ag_speaker)`,
-	)
+	const egNoRearVisible = `$(options:mode) == 'endfire_gradient' && arrayIncludes(${noRearFacingJson}, $(options:eg_speaker))`
+	const gradientNoRearVisible = `$(options:mode) == 'gradient' && arrayIncludes(${noRearFacingJson}, $(options:gradient_speaker))`
+	const agNoRearVisible = `$(options:mode) == 'array_gradient' && arrayIncludes(${noRearFacingJson}, $(options:ag_speaker))`
 
 	// Speaker keys with no Front Facing preset (End-Fire auto-applies front-facing processing).
 	const noFrontFacingSpeakers = []
@@ -222,10 +213,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		if (!entries.some((e) => isFrontFacingTitle(e.title))) noFrontFacingSpeakers.push(key)
 	}
 	const noFrontFacingJson = JSON.stringify(noFrontFacingSpeakers)
-	const endfireNoFrontVisible = new Function(
-		'options',
-		`return !!options && options.mode === 'endfire' && ${noFrontFacingJson}.includes(options.endfire_speaker)`,
-	)
+	const endfireNoFrontVisible = `$(options:mode) == 'endfire' && arrayIncludes(${noFrontFacingJson}, $(options:endfire_speaker))`
 
 	// Phase Curve (PC63 / PC100 / PC125) option defs, grouped by the set of phases a loudspeaker
 	// offers so speakers with identical choices share one dropdown. The selected phase resolves to
@@ -256,17 +244,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		for (const group of groups.values()) {
 			const optionId = `${idPrefix}${++n}`
 			const allowedJson = JSON.stringify(group.speakers)
-			const isVisible = new Function(
-				'options',
-				`return !!options && options.mode === '${modeStr}' && ${allowedJson}.includes(options.${speakerOptId})`,
-			)
+			const isVisible = `$(options:mode) == '${modeStr}' && arrayIncludes(${allowedJson}, $(options:${speakerOptId}))`
 			defs.push({
 				type: 'dropdown',
 				id: optionId,
 				label: 'Phase Curve',
 				default: group.defaultId,
 				choices: group.choices,
-				isVisible,
+				isVisibleExpression: isVisible,
 			})
 			for (const sp of group.speakers) speakerPhaseOption.set(sp, optionId)
 		}
@@ -334,7 +319,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			...endfirePhaseOptionDefs,
 			{
@@ -343,7 +328,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'No factory Front Facing preset',
 				value:
 					'This loudspeaker has no factory front-facing settings. Enter a base delay below — it is added on top of every end-fire tap.',
-				isVisible: endfireNoFrontVisible,
+				isVisibleExpression: endfireNoFrontVisible,
 			},
 			{
 				type: 'number',
@@ -353,14 +338,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 100,
 				step: 0.01,
-				isVisible: endfireNoFrontVisible,
+				isVisibleExpression: endfireNoFrontVisible,
 			},
 			{
 				type: 'static-text',
 				id: 'preview',
 				label: 'Recommended spacing',
 				value: subassistPreview(self),
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			{
 				type: 'number',
@@ -370,7 +355,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 10,
 				max: 200,
 				step: 1,
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			{
 				type: 'number',
@@ -380,7 +365,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: -40,
 				max: 140,
 				step: 0.1,
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -391,7 +376,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'C', label: '°C' },
 					{ id: 'F', label: '°F' },
 				],
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -407,7 +392,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: '7', label: '7 (T0..T6)' },
 					{ id: '8', label: '8 (T0..T7)' },
 				],
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -415,7 +400,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output',
 				default: '1',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			{
 				type: 'textinput',
@@ -423,7 +408,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Channel name prefix (optional)',
 				default: '',
 				tooltip: 'When set, names each output "<prefix> T#" (e.g. "Sub T0", "Sub T1")',
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -431,14 +416,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 			{
 				type: 'checkbox',
 				id: 'reset_endfire',
 				label: 'Reset channels to factory defaults before applying',
 				default: false,
-				isVisible: (o) => o.mode === 'endfire',
+				isVisibleExpression: "$(options:mode) == 'endfire'",
 			},
 
 			// ===== ARRAY OPTIONS =====
@@ -448,7 +433,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			...arrayPhaseOptionDefs,
 			{
@@ -459,7 +444,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 1,
 				max: 2 * NUM_OUTPUTS,
 				tooltip: `Up to ${2 * NUM_OUTPUTS} in Mono (uses half the outputs); Stereo is limited to ${NUM_OUTPUTS} outputs.`,
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'dropdown',
@@ -473,7 +458,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				tooltip:
 					'Stereo writes every sub. Mono writes only the first half (the array is mirror-symmetric, ' +
 					'so e.g. 12 subs → outputs 1–6 with the same delays) for a single-sided deployment.',
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'checkbox',
@@ -483,7 +468,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				tooltip:
 					'Inverts the arc so the starting/edge channels get 0 ms and the center gets the max delay ' +
 					'(in-to-out instead of out-to-in). In Mono this puts 0 ms at the starting channel.',
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'dropdown',
@@ -491,7 +476,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Starting output channel',
 				default: '',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'dropdown',
@@ -502,7 +487,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'm', label: 'Meters' },
 					{ id: 'ft', label: 'Feet' },
 				],
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'number',
@@ -512,7 +497,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 100,
 				step: 0.01,
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'number',
@@ -522,7 +507,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 180,
 				step: 1,
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'number',
@@ -532,7 +517,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				step: 0.1,
 				min: -40,
 				max: 140,
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'dropdown',
@@ -543,7 +528,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'C', label: '°C' },
 					{ id: 'F', label: '°F' },
 				],
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'textinput',
@@ -551,7 +536,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Channel name prefix (optional)',
 				default: '',
 				tooltip: 'When set, names each output "<prefix> #" (e.g. "Sub 1", "Sub 2")',
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'dropdown',
@@ -559,14 +544,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 			{
 				type: 'checkbox',
 				id: 'reset_array',
 				label: 'Reset channels to factory defaults before applying',
 				default: false,
-				isVisible: (o) => o.mode === 'array',
+				isVisibleExpression: "$(options:mode) == 'array'",
 			},
 
 			// ===== ARRAY END-FIRE OPTIONS =====
@@ -576,7 +561,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			...arrayendfirePhaseOptionDefs,
 			{
@@ -584,7 +569,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				id: 'arrayendfire_spacing_preview',
 				label: 'Recommended tap spacing (from end-fire freq + temp)',
 				value: subassistPreview(self),
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'number',
@@ -594,7 +579,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 20,
 				max: 200,
 				step: 0.1,
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -610,7 +595,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: '7', label: '7 rows' },
 					{ id: '8', label: '8 rows' },
 				],
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'number',
@@ -620,7 +605,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 1,
 				max: 2 * NUM_OUTPUTS,
 				tooltip: `Up to ${2 * NUM_OUTPUTS} per row in Mono (uses half the outputs); outputs are limited to ${NUM_OUTPUTS}.`,
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -634,7 +619,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				tooltip:
 					'Stereo writes every sub in each row. Mono writes only the first half of each row (rows are ' +
 					'mirror-symmetric, so e.g. 6 subs/row → first 3) for a single-sided deployment.',
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'checkbox',
@@ -644,7 +629,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				tooltip:
 					'Inverts each row’s arc so the edge/start subs get 0 ms and the center gets the max arc ' +
 					'delay (in-to-out instead of out-to-in). In Mono this puts 0 ms at the start of each row.',
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -652,7 +637,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output (row T0)',
 				default: '1',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -660,7 +645,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output (row T1)',
 				default: '3',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 2,
+				isVisibleExpression: "$(options:mode) == 'array_endfire' && $(options:depth_arrayendfire) >= 2",
 			},
 			{
 				type: 'dropdown',
@@ -668,7 +653,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output (row T2)',
 				default: '5',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 3,
+				isVisibleExpression: "$(options:mode) == 'array_endfire' && $(options:depth_arrayendfire) >= 3",
 			},
 			{
 				type: 'dropdown',
@@ -676,7 +661,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output (row T3)',
 				default: '7',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 4,
+				isVisibleExpression: "$(options:mode) == 'array_endfire' && $(options:depth_arrayendfire) >= 4",
 			},
 			{
 				type: 'dropdown',
@@ -684,7 +669,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output (row T4)',
 				default: '9',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 5,
+				isVisibleExpression: "$(options:mode) == 'array_endfire' && $(options:depth_arrayendfire) >= 5",
 			},
 			{
 				type: 'dropdown',
@@ -692,7 +677,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output (row T5)',
 				default: '11',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 6,
+				isVisibleExpression: "$(options:mode) == 'array_endfire' && $(options:depth_arrayendfire) >= 6",
 			},
 			{
 				type: 'dropdown',
@@ -700,7 +685,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output (row T6)',
 				default: '13',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 7,
+				isVisibleExpression: "$(options:mode) == 'array_endfire' && $(options:depth_arrayendfire) >= 7",
 			},
 			{
 				type: 'dropdown',
@@ -708,7 +693,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First output (row T7)',
 				default: '15',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_endfire' && Number(o.depth_arrayendfire) >= 8,
+				isVisibleExpression: "$(options:mode) == 'array_endfire' && $(options:depth_arrayendfire) >= 8",
 			},
 			{
 				type: 'dropdown',
@@ -719,7 +704,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'm', label: 'Meters' },
 					{ id: 'ft', label: 'Feet' },
 				],
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'number',
@@ -729,7 +714,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 100,
 				step: 0.01,
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'number',
@@ -739,7 +724,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 180,
 				step: 1,
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'number',
@@ -749,7 +734,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				step: 0.1,
 				min: -40,
 				max: 140,
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -760,7 +745,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'C', label: '°C' },
 					{ id: 'F', label: '°F' },
 				],
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'textinput',
@@ -768,7 +753,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Channel name prefix (optional)',
 				default: '',
 				tooltip: 'When set, names each output "<prefix> <Row> #" (e.g. "Sub Front 1")',
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'dropdown',
@@ -776,14 +761,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 			{
 				type: 'checkbox',
 				id: 'reset_arrayendfire',
 				label: 'Reset channels to factory defaults before applying',
 				default: false,
-				isVisible: (o) => o.mode === 'array_endfire',
+				isVisibleExpression: "$(options:mode) == 'array_endfire'",
 			},
 
 			// ===== GRADIENT OPTIONS =====
@@ -793,7 +778,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
-				isVisible: (o) => o.mode === 'gradient',
+				isVisibleExpression: "$(options:mode) == 'gradient'",
 			},
 			...gradientPhaseOptionDefs,
 			{
@@ -802,7 +787,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'No factory Rear Facing preset',
 				value:
 					'This loudspeaker has no factory rear-facing settings. Enter a rear delay below — it is applied to the reversed outputs and polarity is reversed automatically.',
-				isVisible: gradientNoRearVisible,
+				isVisibleExpression: gradientNoRearVisible,
 			},
 			{
 				type: 'number',
@@ -812,7 +797,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 100,
 				step: 0.01,
-				isVisible: gradientNoRearVisible,
+				isVisibleExpression: gradientNoRearVisible,
 			},
 			{
 				type: 'multidropdown',
@@ -821,7 +806,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				default: [],
 				choices: outputChoicesFriendly,
 				minSelection: 0,
-				isVisible: (o) => o.mode === 'gradient',
+				isVisibleExpression: "$(options:mode) == 'gradient'",
 			},
 			{
 				type: 'multidropdown',
@@ -830,7 +815,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				default: [],
 				choices: outputChoicesFriendly,
 				minSelection: 0,
-				isVisible: (o) => o.mode === 'gradient',
+				isVisibleExpression: "$(options:mode) == 'gradient'",
 			},
 			{
 				type: 'textinput',
@@ -838,7 +823,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Channel name prefix (optional)',
 				default: '',
 				tooltip: 'When set, names each output "<prefix> Front" / "<prefix> Reversed"',
-				isVisible: (o) => o.mode === 'gradient',
+				isVisibleExpression: "$(options:mode) == 'gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -846,14 +831,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
-				isVisible: (o) => o.mode === 'gradient',
+				isVisibleExpression: "$(options:mode) == 'gradient'",
 			},
 			{
 				type: 'checkbox',
 				id: 'reset_gradient',
 				label: 'Reset channels to factory defaults before applying',
 				default: false,
-				isVisible: (o) => o.mode === 'gradient',
+				isVisibleExpression: "$(options:mode) == 'gradient'",
 			},
 
 			// ===== END-FIRE GRADIENT OPTIONS =====
@@ -863,7 +848,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			...egPhaseOptionDefs,
 			{
@@ -872,7 +857,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'No factory Rear Facing preset',
 				value:
 					'This loudspeaker has no factory rear-facing settings. Enter a rear delay below — polarity is reversed automatically on the negative outputs.',
-				isVisible: egNoRearVisible,
+				isVisibleExpression: egNoRearVisible,
 			},
 			{
 				type: 'number',
@@ -882,14 +867,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 100,
 				step: 0.01,
-				isVisible: egNoRearVisible,
+				isVisibleExpression: egNoRearVisible,
 			},
 			{
 				type: 'static-text',
 				id: 'eg_spacing_preview',
 				label: 'Recommended tap spacing (from target freq + temp)',
 				value: subassistPreview(self),
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'number',
@@ -899,7 +884,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 10,
 				max: 200,
 				step: 1,
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'number',
@@ -909,7 +894,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: -40,
 				max: 140,
 				step: 0.1,
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -920,7 +905,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'C', label: '°C' },
 					{ id: 'F', label: '°F' },
 				],
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -936,7 +921,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: '7', label: '7 (T0..T6)' },
 					{ id: '8', label: '8 (T0..T7)' },
 				],
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -944,7 +929,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First front-facing output',
 				default: '1',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -952,7 +937,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First rear-facing output',
 				default: '2',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'textinput',
@@ -960,7 +945,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Channel name prefix (optional)',
 				default: '',
 				tooltip: 'When set, names each output "<prefix> T# Front" / "<prefix> T# Rear" (e.g. "Sub Floor T0 Front")',
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -968,14 +953,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 			{
 				type: 'checkbox',
 				id: 'reset_eg',
 				label: 'Reset channels to factory defaults before applying',
 				default: false,
-				isVisible: (o) => o.mode === 'endfire_gradient',
+				isVisibleExpression: "$(options:mode) == 'endfire_gradient'",
 			},
 
 			// ===== ARRAY GRADIENT OPTIONS =====
@@ -985,7 +970,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Loudspeaker',
 				default: '',
 				choices: subwooferSpeakerChoices,
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			...agPhaseOptionDefs,
 			{
@@ -994,7 +979,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'No factory Rear Facing preset',
 				value:
 					'This loudspeaker has no factory rear-facing settings. Enter a rear delay below — it is added to the rear outputs and polarity is reversed automatically.',
-				isVisible: agNoRearVisible,
+				isVisibleExpression: agNoRearVisible,
 			},
 			{
 				type: 'number',
@@ -1004,7 +989,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 100,
 				step: 0.01,
-				isVisible: agNoRearVisible,
+				isVisibleExpression: agNoRearVisible,
 			},
 			{
 				type: 'number',
@@ -1013,7 +998,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				default: 6,
 				min: 1,
 				max: NUM_OUTPUTS,
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -1027,7 +1012,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				tooltip:
 					'Stereo writes every sub. Mono writes only the first half of the front and rear blocks ' +
 					'(the array is mirror-symmetric) for a single-sided deployment.',
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'checkbox',
@@ -1037,7 +1022,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				tooltip:
 					'Inverts the arc so the starting/edge channels get 0 ms and the center gets the max arc ' +
 					'delay (in-to-out instead of out-to-in). In Mono this puts 0 ms at the starting channel.',
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -1045,7 +1030,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First front output',
 				default: '1',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -1053,7 +1038,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'First rear output',
 				default: '7',
 				choices: outputChoicesFriendly,
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -1064,7 +1049,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'm', label: 'Meters' },
 					{ id: 'ft', label: 'Feet' },
 				],
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'number',
@@ -1074,7 +1059,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 100,
 				step: 0.01,
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'number',
@@ -1084,7 +1069,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				min: 0,
 				max: 180,
 				step: 1,
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'number',
@@ -1094,7 +1079,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				step: 0.1,
 				min: -40,
 				max: 140,
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -1105,7 +1090,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					{ id: 'C', label: '°C' },
 					{ id: 'F', label: '°F' },
 				],
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'textinput',
@@ -1113,7 +1098,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Channel name prefix (optional)',
 				default: '',
 				tooltip: 'When set, names each output "<prefix> Front #" / "<prefix> Rear #"',
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'dropdown',
@@ -1121,14 +1106,14 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 				label: 'Assign to Output Link Group',
 				default: '0',
 				choices: getOutputLinkGroupChoices(),
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 			{
 				type: 'checkbox',
 				id: 'reset_ag',
 				label: 'Reset channels to factory defaults before applying',
 				default: false,
-				isVisible: (o) => o.mode === 'array_gradient',
+				isVisibleExpression: "$(options:mode) == 'array_gradient'",
 			},
 		],
 		callback: async (e) => {

@@ -171,7 +171,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'console channel',
 				default: '1',
 				choices: inputChoices,
-				isVisible: (o) => isInputPoint(String(nn(o?.consolePoint, '0'))),
+				isVisibleExpression: "$(options:consolePoint) == '0' || $(options:consolePoint) == '1'",
 			},
 			{
 				type: 'dropdown',
@@ -179,7 +179,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'console channel',
 				default: '1',
 				choices: outputChoices,
-				isVisible: (o) => !isInputPoint(String(nn(o?.consolePoint, '0'))),
+				isVisibleExpression: "$(options:consolePoint) != '0' && $(options:consolePoint) != '1'",
 			},
 			{
 				type: 'checkbox',
@@ -200,7 +200,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'processor channel',
 				default: '1',
 				choices: inputChoices,
-				isVisible: (o) => isInputPoint(String(nn(o?.processorPoint, '0'))),
+				isVisibleExpression: "$(options:processorPoint) == '0' || $(options:processorPoint) == '1'",
 			},
 			{
 				type: 'dropdown',
@@ -208,7 +208,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'processor channel',
 				default: '1',
 				choices: outputChoices,
-				isVisible: (o) => !isInputPoint(String(nn(o?.processorPoint, '0'))),
+				isVisibleExpression: "$(options:processorPoint) != '0' && $(options:processorPoint) != '1'",
 			},
 		],
 
@@ -599,14 +599,14 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'line1',
 				label: 'Line 1',
 				default: '',
-				isVisible: (o) => o.mode !== 'clear',
+				isVisibleExpression: "$(options:mode) != 'clear'",
 			},
 			{
 				type: 'textinput',
 				id: 'line2',
 				label: 'Line 2',
 				default: '',
-				isVisible: (o) => o.mode !== 'clear',
+				isVisibleExpression: "$(options:mode) != 'clear'",
 			},
 		],
 		callback: (e) => {
@@ -752,14 +752,14 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '2', label: 'Input B (2)' },
 					{ id: '3', label: 'Input C (3)' },
 				],
-				isVisible: (o) => o.source === 'aes' || o.source === 'avb' || o.source === 'crf',
+				isVisibleExpression: "$(options:source) == 'aes' || $(options:source) == 'avb' || $(options:source) == 'crf'",
 			},
 			{
 				type: 'static-text',
 				id: 'bncInfo',
 				label: 'BNC/Internal note',
 				value: 'BNC and Internal sources ignore the input number.',
-				isVisible: (o) => o.source === 'bnc' || o.source === 'internal',
+				isVisibleExpression: "$(options:source) == 'bnc' || $(options:source) == 'internal'",
 			},
 		],
 		callback: (e) => {

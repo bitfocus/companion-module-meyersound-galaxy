@@ -435,12 +435,7 @@ const PRODUCT_INTEGRATION_DATA = (() => {
 	const phaseOptionDefs = Array.from(phaseGroupMap.values()).map((group) => {
 		const allowedSpeakers = Array.from(group.speakers)
 		const allowedListJson = JSON.stringify(allowedSpeakers)
-		const isVisible = new Function(
-			'options',
-			`const speaker = options && options.speaker !== undefined && options.speaker !== null ? String(options.speaker) : '';
-       if (!speaker || speaker === 'OFF') return false;
-       return ${allowedListJson}.includes(speaker);`,
-		)
+		const isVisible = `arrayIncludes(${allowedListJson}, $(options:speaker))`
 
 		return {
 			type: 'dropdown',
@@ -448,7 +443,7 @@ const PRODUCT_INTEGRATION_DATA = (() => {
 			label: 'Phase Curve',
 			default: group.defaultId,
 			choices: group.choices,
-			isVisible,
+			isVisibleExpression: isVisible,
 		}
 	})
 
@@ -471,18 +466,14 @@ const PRODUCT_INTEGRATION_DATA = (() => {
 			{ id: '', label: 'Do not apply starting point' },
 			...entries.map((entry) => ({ id: entry.id, label: entry.title })),
 		]
-		const isVisible = new Function(
-			'options',
-			`const speaker = options && options.speaker !== undefined && options.speaker !== null ? String(options.speaker) : '';
-       return speaker === ${safeSpeakerJson};`,
-		)
+		const isVisible = `$(options:speaker) == ${safeSpeakerJson}`
 		startingPointOptionDefs.push({
 			type: 'dropdown',
 			id: optionId,
 			label: 'Starting point',
 			default: '',
 			choices,
-			isVisible,
+			isVisibleExpression: isVisible,
 		})
 		speakerStartingPointOption.set(speaker.key, optionId)
 		speakerStartingPoints.set(speaker.key, entries)
@@ -521,91 +512,66 @@ const PRODUCT_INTEGRATION_DATA = (() => {
 
 		// Gradient Front starting point option
 		const frontOptionId = `gradient_sp_front_${++gradientStartingPointCounter}`
-		const isVisibleFront = new Function(
-			'options',
-			`const mode = options && options.mode !== undefined ? String(options.mode) : '';
-       const speaker = options && options.gradient_speaker !== undefined && options.gradient_speaker !== null ? String(options.gradient_speaker) : '';
-       return mode === 'gradient' && speaker === ${safeSpeakerJson};`,
-		)
+		const isVisibleFront = `$(options:mode) == 'gradient' && $(options:gradient_speaker) == ${safeSpeakerJson}`
 		gradientStartingPointOptionDefs_Front.push({
 			type: 'dropdown',
 			id: frontOptionId,
 			label: 'Starting Point Front',
 			default: '',
 			choices,
-			isVisible: isVisibleFront,
+			isVisibleExpression: isVisibleFront,
 		})
 		gradientSpeakerStartingPointOption_Front.set(speaker.key, frontOptionId)
 
 		// Gradient Reversed starting point option
 		const reversedOptionId = `gradient_sp_reversed_${gradientStartingPointCounter}`
-		const isVisibleReversed = new Function(
-			'options',
-			`const mode = options && options.mode !== undefined ? String(options.mode) : '';
-       const speaker = options && options.gradient_speaker !== undefined && options.gradient_speaker !== null ? String(options.gradient_speaker) : '';
-       return mode === 'gradient' && speaker === ${safeSpeakerJson};`,
-		)
+		const isVisibleReversed = `$(options:mode) == 'gradient' && $(options:gradient_speaker) == ${safeSpeakerJson}`
 		gradientStartingPointOptionDefs_Reversed.push({
 			type: 'dropdown',
 			id: reversedOptionId,
 			label: 'Starting Point Reversed',
 			default: '',
 			choices,
-			isVisible: isVisibleReversed,
+			isVisibleExpression: isVisibleReversed,
 		})
 		gradientSpeakerStartingPointOption_Reversed.set(speaker.key, reversedOptionId)
 
 		// End-Fire starting point option
 		const endfireOptionId = `endfire_sp_${++endfireStartingPointCounter}`
-		const isVisibleEndfire = new Function(
-			'options',
-			`const mode = options && options.mode !== undefined ? String(options.mode) : '';
-       const speaker = options && options.endfire_speaker !== undefined && options.endfire_speaker !== null ? String(options.endfire_speaker) : '';
-       return mode === 'endfire' && speaker === ${safeSpeakerJson};`,
-		)
+		const isVisibleEndfire = `$(options:mode) == 'endfire' && $(options:endfire_speaker) == ${safeSpeakerJson}`
 		endfireStartingPointOptionDefs.push({
 			type: 'dropdown',
 			id: endfireOptionId,
 			label: 'Starting Point',
 			default: '',
 			choices,
-			isVisible: isVisibleEndfire,
+			isVisibleExpression: isVisibleEndfire,
 		})
 		endfireSpeakerStartingPointOption.set(speaker.key, endfireOptionId)
 
 		// Array starting point option
 		const arrayOptionId = `array_sp_${endfireStartingPointCounter}`
-		const isVisibleArray = new Function(
-			'options',
-			`const mode = options && options.mode !== undefined ? String(options.mode) : '';
-       const speaker = options && options.array_speaker !== undefined && options.array_speaker !== null ? String(options.array_speaker) : '';
-       return mode === 'array' && speaker === ${safeSpeakerJson};`,
-		)
+		const isVisibleArray = `$(options:mode) == 'array' && $(options:array_speaker) == ${safeSpeakerJson}`
 		arrayStartingPointOptionDefs.push({
 			type: 'dropdown',
 			id: arrayOptionId,
 			label: 'Starting Point',
 			default: '',
 			choices,
-			isVisible: isVisibleArray,
+			isVisibleExpression: isVisibleArray,
 		})
 		arraySpeakerStartingPointOption.set(speaker.key, arrayOptionId)
 
 		// Array End-Fire starting point option
 		const arrayendfireOptionId = `arrayendfire_sp_${++arrayendfireStartingPointCounter}`
-		const isVisibleArrayEndfire = new Function(
-			'options',
-			`const mode = options && options.mode !== undefined ? String(options.mode) : '';
-       const speaker = options && options.arrayendfire_speaker !== undefined && options.arrayendfire_speaker !== null ? String(options.arrayendfire_speaker) : '';
-       return mode === 'array_endfire' && speaker === ${safeSpeakerJson};`,
-		)
+		const isVisibleArrayEndfire = `$(options:mode) == 'array_endfire' && $(options:arrayendfire_speaker) == ${safeSpeakerJson}`
 		arrayendfireStartingPointOptionDefs.push({
 			type: 'dropdown',
 			id: arrayendfireOptionId,
 			label: 'Starting Point',
 			default: '',
 			choices,
-			isVisible: isVisibleArrayEndfire,
+			isVisibleExpression: isVisibleArrayEndfire,
 		})
 		arrayendfireSpeakerStartingPointOption.set(speaker.key, arrayendfireOptionId)
 	}

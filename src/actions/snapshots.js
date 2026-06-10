@@ -57,10 +57,7 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'Snapshot',
 				default: allSnapshotChoices[0]?.id ?? '',
 				choices: snapshotDropdownChoices,
-				isVisible: (options) => {
-					const op = options.operation
-					return ['recall', 'duplicate', 'delete', 'lock', 'unlock'].includes(op)
-				},
+				isVisibleExpression: "arrayIncludes(['recall','duplicate','delete','lock','unlock'], $(options:operation))",
 			},
 			{
 				type: 'dropdown',
@@ -68,7 +65,7 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'Snapshot',
 				default: '-1',
 				choices: snapshotBootChoices,
-				isVisible: (options) => options.operation === 'set_boot',
+				isVisibleExpression: "$(options:operation) == 'set_boot'",
 			},
 			{
 				type: 'dropdown',
@@ -84,7 +81,7 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						return !/^(true|1|on)$/i.test(locked)
 					}),
 				],
-				isVisible: (options) => options.operation === 'update',
+				isVisibleExpression: "$(options:operation) == 'update'",
 			},
 			{
 				type: 'dropdown',
@@ -103,7 +100,7 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					const locked = String(self?.snapshotValues?.[`snapshot_${id}_locked`] ?? '').trim()
 					return !/^(true|1|on)$/i.test(locked)
 				}),
-				isVisible: (options) => options.operation === 'rename',
+				isVisibleExpression: "$(options:operation) == 'rename'",
 			},
 			{
 				type: 'textinput',
@@ -111,7 +108,7 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'Snapshot name',
 				default: '',
 				useVariables: true,
-				isVisible: (options) => ['create', 'rename'].includes(options.operation),
+				isVisibleExpression: "arrayIncludes(['create','rename'], $(options:operation))",
 			},
 			{
 				type: 'textinput',
@@ -119,70 +116,70 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'Snapshot comment',
 				default: '',
 				useVariables: true,
-				isVisible: (options) => ['create', 'rename'].includes(options.operation),
+				isVisibleExpression: "arrayIncludes(['create','rename'], $(options:operation))",
 			},
 			{
 				type: 'checkbox',
 				id: 'confirm_delete',
 				label: 'YES — really delete this snapshot',
 				default: false,
-				isVisible: (options) => options.operation === 'delete',
+				isVisibleExpression: "$(options:operation) == 'delete'",
 			},
 			{
 				type: 'checkbox',
 				id: 'exclude_input_channel_types',
 				label: 'Exclude Input Channel Types',
 				default: false,
-				isVisible: (options) => options.operation === 'recall',
+				isVisibleExpression: "$(options:operation) == 'recall'",
 			},
 			{
 				type: 'checkbox',
 				id: 'exclude_voltage_ranges',
 				label: 'Exclude Input and Output Voltage Ranges',
 				default: false,
-				isVisible: (options) => options.operation === 'recall',
+				isVisibleExpression: "$(options:operation) == 'recall'",
 			},
 			{
 				type: 'checkbox',
 				id: 'exclude_mute',
 				label: 'Exclude Input and Output Mute',
 				default: false,
-				isVisible: (options) => options.operation === 'recall',
+				isVisibleExpression: "$(options:operation) == 'recall'",
 			},
 			{
 				type: 'checkbox',
 				id: 'exclude_update_active',
 				label: 'Exclude Update active snapshot before recall',
 				default: false,
-				isVisible: (options) => options.operation === 'recall',
+				isVisibleExpression: "$(options:operation) == 'recall'",
 			},
 			{
 				type: 'checkbox',
 				id: 'exclude_sim3_bus',
 				label: 'Exclude SIM3 Bus Address',
 				default: false,
-				isVisible: (options) => options.operation === 'recall',
+				isVisibleExpression: "$(options:operation) == 'recall'",
 			},
 			{
 				type: 'checkbox',
 				id: 'exclude_sim3_probe',
 				label: 'Exclude SIM3 Probe Point',
 				default: false,
-				isVisible: (options) => options.operation === 'recall',
+				isVisibleExpression: "$(options:operation) == 'recall'",
 			},
 			{
 				type: 'checkbox',
 				id: 'exclude_clock_sync',
 				label: 'Exclude Clock Sync Mode',
 				default: false,
-				isVisible: (options) => options.operation === 'recall',
+				isVisibleExpression: "$(options:operation) == 'recall'",
 			},
 			{
 				type: 'checkbox',
 				id: 'exclude_avb',
 				label: 'Exclude AVB Configuration',
 				default: false,
-				isVisible: (options) => options.operation === 'recall',
+				isVisibleExpression: "$(options:operation) == 'recall'",
 			},
 		],
 		callback: async (e) => {

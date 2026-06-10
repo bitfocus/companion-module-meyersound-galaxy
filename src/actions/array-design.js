@@ -27,9 +27,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	const productIntegrationSpeakers = PRODUCT_INTEGRATION_DATA.speakers || new Map()
 	const productIntegrationLookup = PRODUCT_INTEGRATION_DATA.lookup || new Map()
 	const productIntegrationStartingPoints = PRODUCT_INTEGRATION_DATA.startingPoints || new Map()
-	const lineArraySpeakerChoices = PRODUCT_INTEGRATION_DATA.lineArraySpeakerChoices || [
-		{ id: '', label: '-- None --' },
-	]
+	const lineArraySpeakerChoices = PRODUCT_INTEGRATION_DATA.lineArraySpeakerChoices || [{ id: '', label: '-- None --' }]
 	const lineArrayCombinations = STARTING_POINTS_SOURCE.combinations || {}
 
 	/**
@@ -116,19 +114,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			label: 'Phase Curve',
 			default: speaker.phases[0]?.id || '',
 			choices: phaseChoices,
-			isVisible: new Function('options', `
-				if (options.primary_speaker !== ${safeSpeakerJson}) return false;
-				// Only show this if mixed array is disabled OR secondary speaker is same as primary
-				if (options.mixed_array === true) {
-					const primarySpeaker = String(options.primary_speaker || '');
-					const secondaryOptionId = 'secondary_for_' + primarySpeaker;
-					const selectedSecondary = options[secondaryOptionId];
-					// Only show if secondary matches primary (same speaker)
-					return selectedSecondary === primarySpeaker;
-				}
-				// Not a mixed array, show normal phases
-				return true;
-			`),
+			isVisibleExpression: `$(options:primary_speaker) == ${safeSpeakerJson} && (!$(options:mixed_array) || $(options:secondary_for_${speakerKey}) == ${safeSpeakerJson})`,
 		})
 	}
 
@@ -145,10 +131,10 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 		if (!primarySpeaker?.phases || !secondarySpeaker?.phases) continue
 
 		// Calculate intersection of phases
-		const secondaryPhaseIds = new Set(secondarySpeaker.phases.map(p => p.id))
+		const secondaryPhaseIds = new Set(secondarySpeaker.phases.map((p) => p.id))
 		const intersectionPhases = primarySpeaker.phases
-			.filter(p => secondaryPhaseIds.has(p.id))
-			.map(p => ({ id: p.id, label: p.label }))
+			.filter((p) => secondaryPhaseIds.has(p.id))
+			.map((p) => ({ id: p.id, label: p.label }))
 
 		if (intersectionPhases.length === 0) continue // No common phases
 
@@ -161,13 +147,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			label: 'Phase Curve',
 			default: intersectionPhases[0]?.id || '',
 			choices: intersectionPhases,
-			isVisible: new Function('options', `
-				if (options.primary_speaker !== ${safePrimaryJson}) return false;
-				if (options.mixed_array !== true) return false;
-				const secondaryOptionId = 'secondary_for_' + ${safePrimaryJson};
-				const selectedSecondary = options[secondaryOptionId];
-				return selectedSecondary === ${safeSecondaryJson};
-			`),
+			isVisibleExpression: `$(options:primary_speaker) == ${safePrimaryJson} && $(options:mixed_array) && $(options:secondary_for_${primaryKey}) == ${safeSecondaryJson}`,
 		})
 	}
 
@@ -195,7 +175,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			label: 'Starting point (primary)',
 			default: '',
 			choices: choices,
-			isVisible: new Function('options', `return options.primary_speaker === ${safeSpeakerJson};`),
+			isVisibleExpression: `$(options:primary_speaker) == ${safeSpeakerJson}`,
 		})
 	}
 
@@ -254,10 +234,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				{ id: primaryKey, label: primaryKey },
 				{ id: secondarySpeaker, label: secondarySpeaker },
 			],
-			isVisible: new Function(
-				'options',
-				`return options.mixed_array === true && options.primary_speaker === ${safePrimaryJson};`,
-			),
+			isVisibleExpression: `$(options:mixed_array) && $(options:primary_speaker) == ${safePrimaryJson}`,
 		})
 	}
 
@@ -311,15 +288,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'Mixed array',
 				default: false,
 				tooltip: 'Enable to add a secondary loudspeaker type with delay compensation',
-				isVisible: new Function(
-					'options',
-					`
-					const primarySpeaker = String(options.primary_speaker || '');
-					if (!primarySpeaker) return false;
-					const validPrimarySpeakers = ${JSON.stringify(Object.keys(lineArrayCombinations))};
-					return validPrimarySpeakers.includes(primarySpeaker);
-				`,
-				),
+				isVisibleExpression: `arrayIncludes(${JSON.stringify(Object.keys(lineArrayCombinations))}, $(options:primary_speaker))`,
 			},
 			// Spread secondary speaker options - one per primary speaker
 			...lineArraySecondaryOptions,
@@ -330,16 +299,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				default: 6,
 				min: 1,
 				max: 64,
-				isVisible: new Function(
-					'options',
-					`
-					if (!options.mixed_array) return false;
-					const primarySpeaker = String(options.primary_speaker || '');
-					if (!primarySpeaker) return false;
-					const validPrimarySpeakers = ${JSON.stringify(Object.keys(lineArrayCombinations))};
-					return validPrimarySpeakers.includes(primarySpeaker);
-				`,
-				),
+				isVisibleExpression: `$(options:mixed_array) && arrayIncludes(${JSON.stringify(Object.keys(lineArrayCombinations))}, $(options:primary_speaker))`,
 			},
 
 			// Spread secondary starting point options - one per speaker
@@ -372,18 +332,18 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				isVisible: (o) => {
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
-						return false;
+						return false
 					}
 					// If mixed array is enabled, check if secondary speaker matches primary
 					if (o.mixed_array === true) {
-						const primarySpeaker = String(o.primary_speaker || '');
-						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
-						const selectedSecondary = o[secondaryOptionId];
+						const primarySpeaker = String(o.primary_speaker || '')
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker
+						const selectedSecondary = o[secondaryOptionId]
 						// Only show LMBC if secondary speaker is the same as primary
-						return selectedSecondary === primarySpeaker;
+						return selectedSecondary === primarySpeaker
 					}
 					// Not a mixed array, show LMBC
-					return true;
+					return true
 				},
 			},
 			{
@@ -394,21 +354,21 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: getBeamControlArrayChoices(),
 				tooltip: 'Select which beam control array to configure (1-4)',
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false;
+					if (o.enable_lmbc !== true) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
-						return false;
+						return false
 					}
 					// If mixed array is enabled, check if secondary speaker matches primary
 					if (o.mixed_array === true) {
-						const primarySpeaker = String(o.primary_speaker || '');
-						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
-						const selectedSecondary = o[secondaryOptionId];
+						const primarySpeaker = String(o.primary_speaker || '')
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker
+						const selectedSecondary = o[secondaryOptionId]
 						// Only show LMBC if secondary speaker is the same as primary
-						return selectedSecondary === primarySpeaker;
+						return selectedSecondary === primarySpeaker
 					}
 					// Not a mixed array, show LMBC
-					return true;
+					return true
 				},
 			},
 			{
@@ -420,21 +380,21 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				max: 99,
 				tooltip: 'Total beam angle in degrees (10-99)',
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false;
+					if (o.enable_lmbc !== true) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
-						return false;
+						return false
 					}
 					// If mixed array is enabled, check if secondary speaker matches primary
 					if (o.mixed_array === true) {
-						const primarySpeaker = String(o.primary_speaker || '');
-						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
-						const selectedSecondary = o[secondaryOptionId];
+						const primarySpeaker = String(o.primary_speaker || '')
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker
+						const selectedSecondary = o[secondaryOptionId]
 						// Only show LMBC if secondary speaker is the same as primary
-						return selectedSecondary === primarySpeaker;
+						return selectedSecondary === primarySpeaker
 					}
 					// Not a mixed array, show LMBC
-					return true;
+					return true
 				},
 			},
 			{
@@ -448,21 +408,21 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				],
 				tooltip: 'Beam control type: Spread or Steer Up',
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false;
+					if (o.enable_lmbc !== true) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
-						return false;
+						return false
 					}
 					// If mixed array is enabled, check if secondary speaker matches primary
 					if (o.mixed_array === true) {
-						const primarySpeaker = String(o.primary_speaker || '');
-						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
-						const selectedSecondary = o[secondaryOptionId];
+						const primarySpeaker = String(o.primary_speaker || '')
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker
+						const selectedSecondary = o[secondaryOptionId]
 						// Only show LMBC if secondary speaker is the same as primary
-						return selectedSecondary === primarySpeaker;
+						return selectedSecondary === primarySpeaker
 					}
 					// Not a mixed array, show LMBC
-					return true;
+					return true
 				},
 			},
 			{
@@ -474,21 +434,21 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				max: 32,
 				tooltip: 'First element number in the array (1-32)',
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false;
+					if (o.enable_lmbc !== true) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
-						return false;
+						return false
 					}
 					// If mixed array is enabled, check if secondary speaker matches primary
 					if (o.mixed_array === true) {
-						const primarySpeaker = String(o.primary_speaker || '');
-						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
-						const selectedSecondary = o[secondaryOptionId];
+						const primarySpeaker = String(o.primary_speaker || '')
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker
+						const selectedSecondary = o[secondaryOptionId]
 						// Only show LMBC if secondary speaker is the same as primary
-						return selectedSecondary === primarySpeaker;
+						return selectedSecondary === primarySpeaker
 					}
 					// Not a mixed array, show LMBC
-					return true;
+					return true
 				},
 			},
 			{
@@ -497,21 +457,21 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'LMBC Status',
 				value: lmbcStatusPreview(1),
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false;
+					if (o.enable_lmbc !== true) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
-						return false;
+						return false
 					}
 					// If mixed array is enabled, check if secondary speaker matches primary
 					if (o.mixed_array === true) {
-						const primarySpeaker = String(o.primary_speaker || '');
-						const secondaryOptionId = 'secondary_for_' + primarySpeaker;
-						const selectedSecondary = o[secondaryOptionId];
+						const primarySpeaker = String(o.primary_speaker || '')
+						const secondaryOptionId = 'secondary_for_' + primarySpeaker
+						const selectedSecondary = o[secondaryOptionId]
 						// Only show LMBC if secondary speaker is the same as primary
-						return selectedSecondary === primarySpeaker;
+						return selectedSecondary === primarySpeaker
 					}
 					// Not a mixed array, show LMBC
-					return true;
+					return true
 				},
 			},
 		],
@@ -567,7 +527,10 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 						}
 					}
 
-					self.log?.('info', `Line Array Design: Reset delay integration type and applied channel naming to ${numOutputs} outputs starting from Output ${startOutput}`)
+					self.log?.(
+						'info',
+						`Line Array Design: Reset delay integration type and applied channel naming to ${numOutputs} outputs starting from Output ${startOutput}`,
+					)
 					return
 				}
 
@@ -691,7 +654,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					} else {
 						const secondaryIndex = i - primaryOutputs
 						// Continue element numbering from primary elements
-						firstElement = primaryElements + (secondaryIndex * elementsPerOutput) + 1
+						firstElement = primaryElements + secondaryIndex * elementsPerOutput + 1
 						lastElement = primaryElements + Math.min((secondaryIndex + 1) * elementsPerOutput, secondaryElements)
 					}
 					const elementsOnThisOutput = lastElement - firstElement + 1
@@ -797,7 +760,10 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					if (typeof self.checkFeedbacks === 'function') {
 						self.checkFeedbacks('output_link_group_assigned')
 					}
-					self.log?.('info', `Line Array Design: Removed link group assignment from ${numOutputs} outputs starting from Output ${startOutput}`)
+					self.log?.(
+						'info',
+						`Line Array Design: Removed link group assignment from ${numOutputs} outputs starting from Output ${startOutput}`,
+					)
 				}
 
 				// Send commands
@@ -1029,16 +995,16 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				}
 
 				const productTypeLabels = {
-					'0': 'LEO-M',
-					'1': 'LYON',
-					'2': 'LEOPARD',
-					'3': 'MICA',
-					'4': 'MELODIE',
-					'5': 'MINA',
-					'6': 'MILO',
-					'7': 'M3D',
-					'8': 'M2D',
-					'9': 'PANTHER',
+					0: 'LEO-M',
+					1: 'LYON',
+					2: 'LEOPARD',
+					3: 'MICA',
+					4: 'MELODIE',
+					5: 'MINA',
+					6: 'MILO',
+					7: 'M3D',
+					8: 'M2D',
+					9: 'PANTHER',
 				}
 				const speakerName = productTypeLabels[productType] || 'Unknown'
 				const bypassStatus = bypass === 'true' ? 'Bypassed' : 'Active'

@@ -56,7 +56,7 @@ function registerMatrixActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -90,
 				max: 20,
 				step: 0.1,
-				isVisible: (o) => o.mode === 'set',
+				isVisibleExpression: "$(options:mode) == 'set'",
 			},
 			{
 				type: 'dropdown',
@@ -78,7 +78,7 @@ function registerMatrixActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '2.5', label: '+2.5 dB' },
 					{ id: '3', label: '+3.0 dB' },
 				],
-				isVisible: (o) => o.mode === 'nudge',
+				isVisibleExpression: "$(options:mode) == 'nudge'",
 			},
 			{
 				type: 'number',
@@ -88,7 +88,7 @@ function registerMatrixActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 0,
 				max: 600000,
 				step: 10,
-				isVisible: (o) => o.mode !== 'nudge' && o.mode !== 'minus6',
+				isVisibleExpression: "$(options:mode) != 'nudge' && $(options:mode) != 'minus6'",
 			},
 			{
 				type: 'dropdown',
@@ -99,7 +99,7 @@ function registerMatrixActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'linear', label: 'Linear (dB)' },
 					{ id: 'log', label: 'Logarithmic' },
 				],
-				isVisible: (o) => o.mode !== 'nudge' && o.mode !== 'minus6',
+				isVisibleExpression: "$(options:mode) != 'nudge' && $(options:mode) != 'minus6'",
 			},
 		],
 		callback: (e) => {
@@ -139,7 +139,6 @@ function registerMatrixActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 	// ===== Matrix Delay ======
 	// =========================
-
 
 	actions['matrix_delay_full'] = {
 		name: 'Matrix: Delay',
@@ -184,7 +183,7 @@ function registerMatrixActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 0,
 				max: 500,
 				step: 0.01,
-				isVisible: (o) => o.type !== 'unchanged',
+				isVisibleExpression: "$(options:type) != 'unchanged'",
 			},
 			{
 				type: 'dropdown',

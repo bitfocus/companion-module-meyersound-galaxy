@@ -530,7 +530,7 @@ class ModuleInstance extends InstanceBase {
 					'or Meyer mDNS "<Device Name>.<Device Group Name>" — for the mDNS form ' +
 					'we append .local automatically (example: MyGalaxy.MyGroup). ' +
 					'Galaxy always listens on TCP port 25003.',
-				isVisible: (options) => options.auto_key === '__manual__',
+				isVisibleExpression: "$(options:auto_key) == '__manual__'",
 			},
 			{
 				type: 'textinput',
@@ -552,7 +552,7 @@ class ModuleInstance extends InstanceBase {
 				label: '',
 				width: 0,
 				default: '',
-				isVisible: () => false,
+				isVisibleExpression: 'false',
 			},
 		]
 	}

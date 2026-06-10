@@ -195,7 +195,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -90,
 				max: 10,
 				step: 0.1,
-				isVisible: (o) => o.target === 'value',
+				isVisibleExpression: "$(options:target) == 'value'",
 			},
 			{
 				type: 'dropdown',
@@ -217,7 +217,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '2.5', label: '+2.5 dB' },
 					{ id: '3', label: '+3.0 dB' },
 				],
-				isVisible: (o) => o.target === 'nudge',
+				isVisibleExpression: "$(options:target) == 'nudge'",
 			},
 			{
 				type: 'number',
@@ -227,7 +227,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -90,
 				max: 10,
 				step: 0.1,
-				isVisible: (o) => o.target === 'pair',
+				isVisibleExpression: "$(options:target) == 'pair'",
 			},
 			{
 				type: 'number',
@@ -237,7 +237,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -90,
 				max: 10,
 				step: 0.1,
-				isVisible: (o) => o.target === 'pair',
+				isVisibleExpression: "$(options:target) == 'pair'",
 			},
 			{
 				type: 'number',
@@ -247,7 +247,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 0,
 				max: 600000,
 				step: 10,
-				isVisible: (o) => o.target !== 'nudge',
+				isVisibleExpression: "$(options:target) != 'nudge'",
 			},
 			{
 				type: 'dropdown',
@@ -258,7 +258,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'linear', label: 'Linear (dB)' },
 					{ id: 'log', label: 'Logarithmic' },
 				],
-				isVisible: (o) => o.target !== 'nudge',
+				isVisibleExpression: "$(options:target) != 'nudge'",
 			},
 		],
 		callback: (e) => {
@@ -411,7 +411,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 0,
 				max: 500,
 				step: 0.01,
-				isVisible: (o) => o.type !== 'unchanged',
+				isVisibleExpression: "$(options:type) != 'unchanged'",
 			},
 		],
 		callback: (e) => {
@@ -629,7 +629,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -18,
 				max: 18,
 				step: 0.1,
-				isVisible: (o) => o.param === 'gain' && o.mode === 'set',
+				isVisibleExpression: "$(options:param) == 'gain' && $(options:mode) == 'set'",
 			},
 			{
 				type: 'number',
@@ -639,7 +639,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -18,
 				max: 18,
 				step: 0.1,
-				isVisible: (o) => o.param === 'gain' && o.mode === 'adjust',
+				isVisibleExpression: "$(options:param) == 'gain' && $(options:mode) == 'adjust'",
 			},
 			{
 				type: 'number',
@@ -649,7 +649,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 10,
 				max: 20000,
 				step: 1,
-				isVisible: (o) => o.param === 'frequency' && o.mode === 'set' && o.band !== '5',
+				isVisibleExpression: "$(options:param) == 'frequency' && $(options:mode) == 'set' && $(options:band) != '5'",
 			},
 			{
 				type: 'number',
@@ -659,7 +659,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -1000,
 				max: 1000,
 				step: 1,
-				isVisible: (o) => o.param === 'frequency' && o.mode === 'adjust' && o.band !== '5',
+				isVisibleExpression: "$(options:param) == 'frequency' && $(options:mode) == 'adjust' && $(options:band) != '5'",
 			},
 			{
 				type: 'number',
@@ -669,7 +669,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 0.1,
 				max: 2,
 				step: 0.1,
-				isVisible: (o) => o.param === 'slope' && o.mode === 'set' && o.band !== '5',
+				isVisibleExpression: "$(options:param) == 'slope' && $(options:mode) == 'set' && $(options:band) != '5'",
 			},
 			{
 				type: 'number',
@@ -679,14 +679,14 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -2,
 				max: 2,
 				step: 0.1,
-				isVisible: (o) => o.param === 'slope' && o.mode === 'adjust' && o.band !== '5',
+				isVisibleExpression: "$(options:param) == 'slope' && $(options:mode) == 'adjust' && $(options:band) != '5'",
 			},
 			{
 				type: 'static-text',
 				id: 'band5_note',
 				label: 'Note',
 				value: 'Band 5 (HF) only has gain parameter',
-				isVisible: (o) => o.band === '5' && o.param !== 'gain',
+				isVisibleExpression: "$(options:band) == '5' && $(options:param) != 'gain'",
 			},
 		],
 		callback: (e) => {
@@ -814,7 +814,14 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			const gainRaw = Number(e.options.gain ?? 0)
 			const band1Gain = Math.max(-18, Math.min(18, gainRaw))
 			const band5Gain = Math.max(-18, Math.min(18, -band1Gain))
-			const slopeLabel = { 1: '6 dB/oct', 2: '12 dB/oct', 3: '18 dB/oct', 4: '24 dB/oct', 5: '30 dB/oct', 6: '36 dB/oct' }
+			const slopeLabel = {
+				1: '6 dB/oct',
+				2: '12 dB/oct',
+				3: '18 dB/oct',
+				4: '24 dB/oct',
+				5: '30 dB/oct',
+				6: '36 dB/oct',
+			}
 
 			for (const ch of chs) {
 				// Frequencies and slopes for bands 1-4
@@ -1402,10 +1409,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				}
 
 				const inputName = self?.inputName?.[ch] ? ` (${self.inputName[ch]})` : ''
-				self.log?.(
-					'info',
-					`Chingonizer: Input ${ch}${inputName} bands 1-4 slope ${currentSlope} -> ${newSlope}`,
-				)
+				self.log?.('info', `Chingonizer: Input ${ch}${inputName} bands 1-4 slope ${currentSlope} -> ${newSlope}`)
 			}
 
 			if (typeof self._updateUShapingCurrentValues === 'function') {
@@ -2305,7 +2309,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'true', label: 'Bypass ON' },
 					{ id: 'false', label: 'Bypass OFF' },
 				],
-				isVisible: (o) => o.mode === 'set',
+				isVisibleExpression: "$(options:mode) == 'set'",
 			},
 		],
 		callback: (e) => {
@@ -2384,7 +2388,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'true', label: 'Bypassed' },
 					{ id: 'false', label: 'Enabled' },
 				],
-				isVisible: (o) => o.mode === 'set',
+				isVisibleExpression: "$(options:mode) == 'set'",
 			},
 		],
 		callback: (e) => {

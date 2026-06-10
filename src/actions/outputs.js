@@ -1393,7 +1393,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'true', label: 'Bypassed' },
 					{ id: 'false', label: 'Enabled' },
 				],
-				isVisible: (o) => o.mode === 'set',
+				isVisibleExpression: "$(options:mode) == 'set'",
 			},
 		],
 		callback: (e) => {
@@ -1477,7 +1477,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'true', label: 'Bypassed' },
 					{ id: 'false', label: 'Enabled' },
 				],
-				isVisible: (o) => o.mode === 'set',
+				isVisibleExpression: "$(options:mode) == 'set'",
 			},
 		],
 		callback: (e) => {
@@ -1597,7 +1597,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -90,
 				max: 10,
 				step: 0.1,
-				isVisible: (o) => o.target === 'value',
+				isVisibleExpression: "$(options:target) == 'value'",
 			},
 			{
 				type: 'dropdown',
@@ -1619,7 +1619,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '2.5', label: '+2.5 dB' },
 					{ id: '3', label: '+3.0 dB' },
 				],
-				isVisible: (o) => o.target === 'nudge',
+				isVisibleExpression: "$(options:target) == 'nudge'",
 			},
 			{
 				type: 'number',
@@ -1629,7 +1629,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -90,
 				max: 10,
 				step: 0.1,
-				isVisible: (o) => o.target === 'pair',
+				isVisibleExpression: "$(options:target) == 'pair'",
 			},
 			{
 				type: 'number',
@@ -1639,7 +1639,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -90,
 				max: 10,
 				step: 0.1,
-				isVisible: (o) => o.target === 'pair',
+				isVisibleExpression: "$(options:target) == 'pair'",
 			},
 			{
 				type: 'number',
@@ -1649,7 +1649,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 0,
 				max: 600000,
 				step: 10,
-				isVisible: (o) => o.target !== 'nudge',
+				isVisibleExpression: "$(options:target) != 'nudge'",
 			},
 			{
 				type: 'dropdown',
@@ -1660,7 +1660,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: 'linear', label: 'Linear (dB)' },
 					{ id: 'log', label: 'Logarithmic' },
 				],
-				isVisible: (o) => o.target !== 'nudge',
+				isVisibleExpression: "$(options:target) != 'nudge'",
 			},
 		],
 
@@ -1893,7 +1893,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 0,
 				max: 2000,
 				step: 0.01,
-				isVisible: (o) => o.type !== 'unchanged',
+				isVisibleExpression: "$(options:type) != 'unchanged'",
 			},
 		],
 		callback: (e) => {
@@ -1972,7 +1972,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	const ATMOS_LINE_OPTIONS = []
 	const MAX_LINES = Math.min(16, NUM_OUTPUTS)
 	for (let i = 1; i <= MAX_LINES; i++) {
-		const visibleExpr = new Function('o', `return Number(o.count || 0) >= ${i}`)
+		const visibleExpr = `$(options:count) >= ${i}`
 		ATMOS_LINE_OPTIONS.push({
 			type: 'number',
 			id: `distance_${i}`,
@@ -1981,7 +1981,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			min: 1,
 			max: 150,
 			step: 1,
-			isVisible: visibleExpr,
+			isVisibleExpression: visibleExpr,
 		})
 		ATMOS_LINE_OPTIONS.push({
 			type: 'dropdown',
@@ -1989,7 +1989,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			label: `Line ${i}: Gain (%)`,
 			default: '10',
 			choices: ATMOS_GAIN_CHOICES,
-			isVisible: visibleExpr,
+			isVisibleExpression: visibleExpr,
 		})
 		if (i < MAX_LINES) {
 			ATMOS_LINE_OPTIONS.push({
@@ -1997,7 +1997,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: `line_sep_${i}`,
 				label: '',
 				value: ' ',
-				isVisible: visibleExpr,
+				isVisibleExpression: visibleExpr,
 			})
 		}
 	}
@@ -2046,9 +2046,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				const gainRaw = Number(e.options[`gain_${i}`])
 
 				const distance = Number.isFinite(distRaw) ? Math.max(1, Math.min(150, Math.round(distRaw))) : 1
-				const gain = Number.isFinite(gainRaw)
-					? Math.round(Math.max(10, Math.min(100, gainRaw)) / 10) * 10
-					: 10
+				const gain = Number.isFinite(gainRaw) ? Math.round(Math.max(10, Math.min(100, gainRaw)) / 10) * 10 : 10
 
 				self._cmdSendLine(`/processing/output/${ch}/atmospheric/bypass=${bypass ? 'true' : 'false'}`)
 				self._cmdSendLine(`/processing/output/${ch}/atmospheric/distance=${distance}`)
@@ -2250,7 +2248,8 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	const productIntegrationSpeakerPhaseGroup = PRODUCT_INTEGRATION_DATA_PI.speakerPhaseGroup || new Map()
 	const productIntegrationLookup = PRODUCT_INTEGRATION_DATA_PI.lookup || new Map()
 	const productIntegrationSpeakers = PRODUCT_INTEGRATION_DATA_PI.speakers || new Map()
-	const productIntegrationSpeakerStartingPointOption = PRODUCT_INTEGRATION_DATA_PI.speakerStartingPointOption || new Map()
+	const productIntegrationSpeakerStartingPointOption =
+		PRODUCT_INTEGRATION_DATA_PI.speakerStartingPointOption || new Map()
 	const productIntegrationStartingPoints = PRODUCT_INTEGRATION_DATA_PI.startingPoints || new Map()
 
 	// Import FACTORY_RESET_COMMANDS from actions-data
@@ -2290,11 +2289,8 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					return 'Apply delay compensation for mixed arrays'
 				},
 				default: false,
-				isVisible: (o) => {
-					const speakerKey = String(o.speaker || '')
-					// Only show for LEO, LEOPARD, or MINA
-					return speakerKey === 'LEO' || speakerKey === 'LEOPARD' || speakerKey === 'MINA'
-				},
+				isVisibleExpression:
+					"$(options:speaker) == 'LEO' || $(options:speaker) == 'LEOPARD' || $(options:speaker) == 'MINA'",
 			},
 			{
 				type: 'checkbox',
@@ -3092,7 +3088,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 10,
 				max: 20000,
 				step: 1,
-				isVisible: (o) => o.mode === 'value',
+				isVisibleExpression: "$(options:mode) == 'value'",
 			},
 			{
 				type: 'number',
@@ -3102,7 +3098,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -20000,
 				max: 20000,
 				step: 1,
-				isVisible: (o) => o.mode === 'nudge',
+				isVisibleExpression: "$(options:mode) == 'nudge'",
 			},
 		],
 		callback: (e) => {
@@ -3180,7 +3176,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: 0.5,
 				max: 12,
 				step: 0.01,
-				isVisible: (o) => o.mode === 'value',
+				isVisibleExpression: "$(options:mode) == 'value'",
 			},
 			{
 				type: 'number',
@@ -3190,7 +3186,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -12,
 				max: 12,
 				step: 0.01,
-				isVisible: (o) => o.mode === 'nudge',
+				isVisibleExpression: "$(options:mode) == 'nudge'",
 			},
 			{
 				type: 'number',
@@ -3200,7 +3196,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				min: -12,
 				max: 12,
 				step: 0.01,
-				isVisible: (o) => o.mode === 'nudge',
+				isVisibleExpression: "$(options:mode) == 'nudge'",
 			},
 		],
 		callback: (e) => {
@@ -3309,7 +3305,6 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '5000', label: '5 s' },
 					{ id: '10000', label: '10 s' },
 					{ id: '15000', label: '15 s' },
-
 				],
 			},
 			{
