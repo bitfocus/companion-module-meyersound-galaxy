@@ -188,6 +188,14 @@ class ModuleInstance extends InstanceBase {
 		this.matrixDelay = {} // { 'mi-mo': { samples: number, ms: number, bypass: boolean } }
 		this._matrixInputRoutes = {}
 		this._matrixOutputRoutes = {}
+		// Matrix-gain updates are coalesced: route summaries (row+column scans), per-crosspoint
+		// gain variables, and feedback checks are flushed once per debounce window instead of on
+		// every message (the init seed pushes 32×16 = 512 crosspoints in a burst).
+		this._mxDirtyIn = new Set()
+		this._mxDirtyOut = new Set()
+		this._mxPendingVars = {}
+		this._mxFeedbackDirty = false
+		this._matrixSummaryTimer = null
 
 		// previous gain caches (for revert)
 		this._prevInputGainByButton = new Map()
@@ -388,6 +396,8 @@ class ModuleInstance extends InstanceBase {
 		this._meterFlushTimer = null
 		clearTimeout(this._presetsRefreshTimer)
 		this._presetsRefreshTimer = null
+		clearTimeout(this._matrixSummaryTimer)
+		this._matrixSummaryTimer = null
 
 		try {
 			this.subSock?.destroy()
@@ -399,6 +409,10 @@ class ModuleInstance extends InstanceBase {
 			this.cmdSock?.destroy()
 		} catch {}
 		this.cmdSock = null
+		try {
+			this._logHistoryInFlight?.destroy()
+		} catch {}
+		this._logHistoryInFlight = null
 
 		try {
 			this._linkBus?.stop()
@@ -444,6 +458,8 @@ class ModuleInstance extends InstanceBase {
 		this._meterFlushTimer = null
 		clearTimeout(this._presetsRefreshTimer)
 		this._presetsRefreshTimer = null
+		clearTimeout(this._matrixSummaryTimer)
+		this._matrixSummaryTimer = null
 
 		// Reconnect if the target changed: either the dropdown selection, or
 		// (when in manual mode) the typed host/port.
@@ -461,6 +477,10 @@ class ModuleInstance extends InstanceBase {
 				this.cmdSock?.destroy()
 			} catch {}
 			this.cmdSock = null
+			try {
+				this._logHistoryInFlight?.destroy()
+			} catch {}
+			this._logHistoryInFlight = null
 			this._reconnectAttempts = 0
 			this._reconnectDelay = RECONNECT_DELAY_MS
 		}
@@ -558,7 +578,14 @@ class ModuleInstance extends InstanceBase {
 
 		const reconnect = () => {
 			if (this._destroyed) return
-			if (this.subSock === sock) this.subSock = null
+			// Idempotent: a single failure emits error+close (and sometimes end). Only the first
+			// event for THIS socket schedules a reconnect; later events bail so the backoff isn't
+			// advanced twice and we don't spawn parallel reconnect chains.
+			if (this.subSock !== sock) return
+			this.subSock = null
+			try {
+				sock.destroy()
+			} catch {}
 			this._logHistoryFetched = false
 
 			// Check if we've exceeded max retry attempts (if limit is set)
@@ -1964,12 +1991,34 @@ class ModuleInstance extends InstanceBase {
 		const key = this._mxKey(mi, mo)
 		if (this.matrixGain[key] === rounded) return
 		this.matrixGain[key] = rounded
-		const vars = {
-			[`matrix_${mi}_${mo}_gain_db`]: rounded.toFixed(1),
+		// Coalesce: stash the per-crosspoint var, mark the row/column dirty, and flush once.
+		this._mxPendingVars[`matrix_${mi}_${mo}_gain_db`] = rounded.toFixed(1)
+		this._mxDirtyIn.add(mi)
+		this._mxDirtyOut.add(mo)
+		this._mxFeedbackDirty = true
+		this._scheduleMatrixSummaries()
+	}
+
+	_scheduleMatrixSummaries() {
+		if (this._matrixSummaryTimer || this._destroyed) return
+		this._matrixSummaryTimer = setTimeout(() => {
+			this._matrixSummaryTimer = null
+			this._flushMatrixSummaries()
+		}, 120)
+	}
+
+	_flushMatrixSummaries() {
+		const vars = this._mxPendingVars
+		this._mxPendingVars = {}
+		for (const mo of this._mxDirtyOut) vars[`matrix_output_${mo}_routes`] = this._computeOutputRoute(mo)
+		for (const mi of this._mxDirtyIn) vars[`matrix_input_${mi}_routes`] = this._computeInputRoute(mi)
+		this._mxDirtyOut.clear()
+		this._mxDirtyIn.clear()
+		if (Object.keys(vars).length) this.setVariableValues(vars)
+		if (this._mxFeedbackDirty) {
+			this._mxFeedbackDirty = false
+			this.checkFeedbacks('matrix_gain_level', 'matrix_gain_color')
 		}
-		Object.assign(vars, this._collectMatrixRouteSummaries(mi, mo))
-		this.setVariableValues(vars)
-		this.checkFeedbacks('matrix_gain_level', 'matrix_gain_color')
 	}
 	_setMatrixGain(mi, mo, gainDb) {
 		const i = Math.max(1, Math.min(MATRIX_INPUTS, Number(mi)))
@@ -2012,10 +2061,8 @@ class ModuleInstance extends InstanceBase {
 		this.setVariableValues({ [`matrix_${mi}_${mo}_delay_type`]: label })
 	}
 
-	_collectMatrixRouteSummaries(mi, mo) {
-		const values = {}
-
-		// Per output: list active inputs feeding this output
+	// Active inputs feeding output `mo` (scans the column)
+	_computeOutputRoute(mo) {
 		const inputs = []
 		for (let src = 1; src <= MATRIX_INPUTS; src++) {
 			const gain = Number(this.matrixGain[this._mxKey(src, mo)])
@@ -2024,9 +2071,11 @@ class ModuleInstance extends InstanceBase {
 		}
 		const outStr = inputs.join(' | ')
 		this._matrixOutputRoutes[mo] = outStr
-		values[`matrix_output_${mo}_routes`] = outStr
+		return outStr
+	}
 
-		// Per input: list outputs fed by this input
+	// Outputs fed by input `mi` (scans the row)
+	_computeInputRoute(mi) {
 		const outs = []
 		for (let dest = 1; dest <= NUM_OUTPUTS; dest++) {
 			const gain = Number(this.matrixGain[this._mxKey(mi, dest)])
@@ -2035,9 +2084,7 @@ class ModuleInstance extends InstanceBase {
 		}
 		const inStr = outs.join(' | ')
 		this._matrixInputRoutes[mi] = inStr
-		values[`matrix_input_${mi}_routes`] = inStr
-
-		return values
+		return inStr
 	}
 
 	_formatMatrixRouteLabel(kind, ch, gain) {
@@ -2314,6 +2361,14 @@ class ModuleInstance extends InstanceBase {
 		}
 
 		sock.setEncoding('utf8')
+		// Connect/idle timeout so a hung connect (or a silent stall) is always torn down,
+		// rather than waiting on the OS TCP timeout (~75s) with the socket left open.
+		sock.setTimeout(8000)
+		sock.on('timeout', () => {
+			this.log?.('warn', 'Log history request timed out')
+			this._logHistoryFetched = false
+			finish()
+		})
 		sock.on('data', (chunk) => {
 			buffer += chunk
 			emitLines()
