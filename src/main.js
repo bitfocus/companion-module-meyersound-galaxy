@@ -4363,16 +4363,16 @@ class ModuleInstance extends InstanceBase {
 		this._discoveryHelper.on('device-removed', (dev) => this._onDeviceLost(dev.entity_id))
 		this._discoveryHelper.start()
 
-		// Local: TCP port-probe on 127.0.0.1 for virtual Galaxy instances. Only useful
-		// for virtual connections, so skip the periodic 60-socket probe on physical
-		// installs where it's pure churn (gated on connection_type).
-		if (this.config?.connection_type === 'virtual') {
-			this._virtScan = new VirtualGalaxyScanner({ log: (l, m) => this.log(l, m) })
-			this._virtScan.on('virtual-added', (v) => this._onVirtualDiscovered(v))
-			this._virtScan.on('virtual-updated', (v) => this._onVirtualDiscovered(v))
-			this._virtScan.on('virtual-removed', (v) => this._onDeviceLost(v.entity_id))
-			this._virtScan.start()
-		}
+		// Local: TCP port-probe on 127.0.0.1 for virtual Galaxy instances so they appear
+		// in the discovery dropdown alongside real hardware. Runs unconditionally: this
+		// scan is what populates the dropdown the user selects a (possibly virtual) device
+		// from, and `connection_type` isn't known/settable until after that selection — so
+		// gating on it would prevent virtual devices from ever being discovered.
+		this._virtScan = new VirtualGalaxyScanner({ log: (l, m) => this.log(l, m) })
+		this._virtScan.on('virtual-added', (v) => this._onVirtualDiscovered(v))
+		this._virtScan.on('virtual-updated', (v) => this._onVirtualDiscovered(v))
+		this._virtScan.on('virtual-removed', (v) => this._onDeviceLost(v.entity_id))
+		this._virtScan.start()
 	}
 
 	_stopDiscovery() {
