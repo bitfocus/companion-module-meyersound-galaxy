@@ -1534,19 +1534,13 @@ function ushapingKnobPreset(self, param) {
 				rotate_left: [
 					{
 						actionId: `input_ushaping_knob_${param}`,
-						options:
-							param === 'slope'
-								? { delta: -1, direction: 'down' }
-								: { delta_fine: -0.1, delta_coarse: -0.5 },
+						options: param === 'slope' ? { delta: -1, direction: 'down' } : { delta_fine: -0.1, delta_coarse: -0.5 },
 					},
 				],
 				rotate_right: [
 					{
 						actionId: `input_ushaping_knob_${param}`,
-						options:
-							param === 'slope'
-								? { delta: 1, direction: 'up' }
-								: { delta_fine: 0.1, delta_coarse: 0.5 },
+						options: param === 'slope' ? { delta: 1, direction: 'up' } : { delta_fine: 0.1, delta_coarse: 0.5 },
 					},
 				],
 			},
@@ -2006,19 +2000,13 @@ function eqKnobPreset(self, param) {
 				rotate_left: [
 					{
 						actionId: `input_eq_knob_${param}`,
-						options:
-							param === 'gain'
-								? { delta_fine: -0.1, delta_coarse: -0.5 }
-								: { delta: -deltas[param] },
+						options: param === 'gain' ? { delta_fine: -0.1, delta_coarse: -0.5 } : { delta: -deltas[param] },
 					},
 				],
 				rotate_right: [
 					{
 						actionId: `input_eq_knob_${param}`,
-						options:
-							param === 'gain'
-								? { delta_fine: 0.1, delta_coarse: 0.5 }
-								: { delta: deltas[param] },
+						options: param === 'gain' ? { delta_fine: 0.1, delta_coarse: 0.5 } : { delta: deltas[param] },
 					},
 				],
 			},
@@ -2284,19 +2272,13 @@ function ushapingOutputKnobPreset(self, param) {
 				rotate_left: [
 					{
 						actionId: `output_ushaping_knob_${param}`,
-						options:
-							param === 'slope'
-								? { delta: -1, direction: 'down' }
-								: { delta_fine: -0.1, delta_coarse: -0.5 },
+						options: param === 'slope' ? { delta: -1, direction: 'down' } : { delta_fine: -0.1, delta_coarse: -0.5 },
 					},
 				],
 				rotate_right: [
 					{
 						actionId: `output_ushaping_knob_${param}`,
-						options:
-							param === 'slope'
-								? { delta: 1, direction: 'up' }
-								: { delta_fine: 0.1, delta_coarse: 0.5 },
+						options: param === 'slope' ? { delta: 1, direction: 'up' } : { delta_fine: 0.1, delta_coarse: 0.5 },
 					},
 				],
 			},
@@ -2483,19 +2465,13 @@ function eqOutputKnobPreset(self, param) {
 				rotate_left: [
 					{
 						actionId: `output_eq_knob_${param}`,
-						options:
-							param === 'gain'
-								? { delta_fine: -0.1, delta_coarse: -0.5 }
-								: { delta: -deltas[param] },
+						options: param === 'gain' ? { delta_fine: -0.1, delta_coarse: -0.5 } : { delta: -deltas[param] },
 					},
 				],
 				rotate_right: [
 					{
 						actionId: `output_eq_knob_${param}`,
-						options:
-							param === 'gain'
-								? { delta_fine: 0.1, delta_coarse: 0.5 }
-								: { delta: deltas[param] },
+						options: param === 'gain' ? { delta_fine: 0.1, delta_coarse: 0.5 } : { delta: deltas[param] },
 					},
 				],
 			},
@@ -2756,7 +2732,7 @@ function matrixRowPreset(self, input, numOutputs) {
 			{
 				down: [
 					{
-						actionId: 'matrix_gain_set',
+						actionId: 'matrix_gain',
 						options: {
 							matrix_inputs: [String(input)],
 							matrix_outputs: outputs,
@@ -2798,7 +2774,7 @@ function matrixColumnPreset(self, output, numInputs) {
 			{
 				down: [
 					{
-						actionId: 'matrix_gain_set',
+						actionId: 'matrix_gain',
 						options: {
 							matrix_inputs: inputs,
 							matrix_outputs: [String(output)],
@@ -2841,7 +2817,7 @@ function matrixClearAllPreset(_self, numInputs, numOutputs) {
 			{
 				down: [
 					{
-						actionId: 'matrix_gain_set',
+						actionId: 'matrix_gain',
 						options: {
 							matrix_inputs: inputs,
 							matrix_outputs: outputs,
@@ -3048,7 +3024,11 @@ module.exports = function UpdatePresets(self, NUM_INPUTS, NUM_OUTPUTS) {
 		for (let band = 1; band <= 3; band++) addOutput(outputAllpassPreset(self, ch, band))
 	}
 
-	addSection('Outputs', 'All-pass Q (Rotary)', 'Fine/coarse rotary control for all-pass Q (press = coarse, release = fine).')
+	addSection(
+		'Outputs',
+		'All-pass Q (Rotary)',
+		'Fine/coarse rotary control for all-pass Q (press = coarse, release = fine).',
+	)
 	for (let ch = 1; ch <= maxOut; ch++) {
 		for (let band = 1; band <= 3; band++) addOutput(outputAllpassQNudgePreset(self, ch, band))
 	}

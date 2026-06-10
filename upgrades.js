@@ -11,45 +11,50 @@ module.exports = [
 
 		// Action ID renames (remove _multi suffixes and standardize prefixes)
 		const actionRenames = {
-			'inputs_mute_control_multi': 'input_mute_control',
-			'inputs_mute_control': 'input_mute_control',
-			'inputs_solo': 'input_solo',
-			'outputs_mute_control_multi': 'output_mute_control',
-			'outputs_mute_control': 'output_mute_control',
-			'outputs_solo': 'output_solo',
-			'matrix_gain_set_multi': 'matrix_gain_set',
-			'matrix_gain_nudge_multi': 'matrix_gain_nudge',
-			'matrix_delay_set_multi': 'matrix_delay_set',
-			'system_input_mode_set_multi': 'system_input_mode_set',
-			'system_chase_start': 'output_chase_start',
-			'system_chase_stop': 'output_chase_stop',
+			inputs_mute_control_multi: 'input_mute_control',
+			inputs_mute_control: 'input_mute_control',
+			inputs_solo: 'input_solo',
+			outputs_mute_control_multi: 'output_mute_control',
+			outputs_mute_control: 'output_mute_control',
+			outputs_solo: 'output_solo',
+			matrix_gain_set_multi: 'matrix_gain',
+			matrix_gain_nudge_multi: 'matrix_gain',
+			matrix_delay_set_multi: 'matrix_delay_full',
+			system_input_mode_set_multi: 'system_input_mode_set',
+			system_chase_start: 'output_chase_start',
+			system_chase_stop: 'output_chase_stop',
 		}
 
-		// Parameter renames for actions
+		// Legacy matrix gain set/nudge are now modes of the single matrix_gain action
+		const legacyMatrixGainMode = {
+			matrix_gain_set_multi: 'set',
+			matrix_gain_nudge_multi: 'nudge',
+		}
+
+		// Parameter renames for actions (keyed by the post-rename action id)
 		const actionParamRenames = {
 			// Matrix actions: mi/mo → matrix_inputs/matrix_outputs
-			'matrix_gain_set': { 'mi': 'matrix_inputs', 'mo': 'matrix_outputs' },
-			'matrix_gain_nudge': { 'mi': 'matrix_inputs', 'mo': 'matrix_outputs' },
-			'matrix_delay_set': { 'mi': 'matrix_inputs', 'mo': 'matrix_outputs' },
+			matrix_gain: { mi: 'matrix_inputs', mo: 'matrix_outputs' },
+			matrix_delay_full: { mi: 'matrix_inputs', mo: 'matrix_outputs' },
 			// Link group actions: channels → chs
-			'input_link_group_assign': { 'channels': 'chs' },
-			'output_link_group_assign': { 'channels': 'chs' },
+			input_link_group_assign: { channels: 'chs' },
+			output_link_group_assign: { channels: 'chs' },
 			// EQ actions: freq_value/freq_delta → frequency_value/frequency_delta
-			'input_eq_knob_frequency': { 'freq_value': 'frequency_value' },
-			'input_eq_nudge_frequency': { 'freq_delta': 'frequency_delta' },
+			input_eq_knob_frequency: { freq_value: 'frequency_value' },
+			input_eq_nudge_frequency: { freq_delta: 'frequency_delta' },
 		}
 
 		// Feedback ID renames
 		const feedbackRenames = {
-			'speakerTestFlash': 'speaker_test_flash',
+			speakerTestFlash: 'speaker_test_flash',
 		}
 
 		// Parameter renames for feedbacks
 		const feedbackParamRenames = {
 			// Matrix feedbacks: mi/mo → matrix_input/matrix_output
-			'matrix_gain_level': { 'mi': 'matrix_input', 'mo': 'matrix_output' },
-			'matrix_delay_bypassed': { 'mi': 'matrix_input', 'mo': 'matrix_output' },
-			'matrix_gain_color': { 'mi': 'matrix_input', 'mo': 'matrix_output' },
+			matrix_gain_level: { mi: 'matrix_input', mo: 'matrix_output' },
+			matrix_delay_bypassed: { mi: 'matrix_input', mo: 'matrix_output' },
+			matrix_gain_color: { mi: 'matrix_input', mo: 'matrix_output' },
 		}
 
 		// Upgrade actions
@@ -74,6 +79,12 @@ module.exports = [
 						changed = true
 					}
 				}
+			}
+
+			// Legacy matrix gain set/nudge → matrix_gain with the matching mode
+			if (legacyMatrixGainMode[action.actionId]) {
+				newAction.options = { ...(newAction.options || {}), mode: legacyMatrixGainMode[action.actionId] }
+				changed = true
 			}
 
 			if (changed) {
@@ -256,6 +267,32 @@ module.exports = [
 		return {
 			updatedConfig: nextCfg,
 			updatedActions: [],
+			updatedFeedbacks: [],
+		}
+	},
+	// V4: Repair configs that an earlier upgrade migrated to non-existent matrix action IDs
+	// (matrix_gain_set / matrix_gain_nudge / matrix_delay_set). Repoint to the real registered
+	// actions; gain set/nudge become modes of matrix_gain (mi/mo were already renamed by V1).
+	function (_context, props) {
+		const idMap = {
+			matrix_gain_set: 'matrix_gain',
+			matrix_gain_nudge: 'matrix_gain',
+			matrix_delay_set: 'matrix_delay_full',
+		}
+		const modeMap = {
+			matrix_gain_set: 'set',
+			matrix_gain_nudge: 'nudge',
+		}
+		const updatedActions = []
+		for (const action of props.actions) {
+			if (!idMap[action.actionId]) continue
+			const newAction = { ...action, actionId: idMap[action.actionId], options: { ...(action.options || {}) } }
+			if (modeMap[action.actionId]) newAction.options.mode = modeMap[action.actionId]
+			updatedActions.push(newAction)
+		}
+		return {
+			updatedConfig: null,
+			updatedActions,
 			updatedFeedbacks: [],
 		}
 	},

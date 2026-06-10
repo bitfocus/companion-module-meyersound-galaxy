@@ -21,11 +21,11 @@ module.exports = function UpdateActions(self, NUM_INPUTS, NUM_OUTPUTS) {
 		return
 	}
 	if (!Number.isFinite(NUM_INPUTS) || NUM_INPUTS < 1) {
-		console.error('UpdateActions: Invalid NUM_INPUTS')
+		self.log('error', 'UpdateActions: Invalid NUM_INPUTS')
 		return
 	}
 	if (!Number.isFinite(NUM_OUTPUTS) || NUM_OUTPUTS < 1) {
-		console.error('UpdateActions: Invalid NUM_OUTPUTS')
+		self.log('error', 'UpdateActions: Invalid NUM_OUTPUTS')
 		return
 	}
 

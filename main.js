@@ -442,6 +442,8 @@ class ModuleInstance extends InstanceBase {
 		this._variablesRefreshTimer = null
 		clearTimeout(this._meterFlushTimer)
 		this._meterFlushTimer = null
+		clearTimeout(this._presetsRefreshTimer)
+		this._presetsRefreshTimer = null
 
 		// Reconnect if the target changed: either the dropdown selection, or
 		// (when in manual mode) the typed host/port.
@@ -959,6 +961,18 @@ class ModuleInstance extends InstanceBase {
 			// ✅ IMPROVED: Log errors for debugging
 			this.log?.('debug', `Sub socket write failed: ${err?.message || err}`)
 		}
+	}
+
+	// Re-read the current snapshot list/state from the device (bare-path reads on the already
+	// subscribed paths). Called after create/update/delete so names/labels refresh promptly
+	// instead of waiting for the next device push. No-ops if the subscription socket is down.
+	requestSnapshots() {
+		if (!this.subSock) return
+		for (let id = 0; id <= SNAPSHOT_MAX; id++) {
+			for (const field of SNAPSHOT_FIELDS) this._subWrite(`/project/snapshot/${id}/${field}`)
+		}
+		for (const field of SNAPSHOT_ACTIVE_FIELDS) this._subWrite(`/project/snapshot/active/${field}`)
+		this._subWrite(`/project/boot_snapshot_id`)
 	}
 
 	_onSubLine(line) {

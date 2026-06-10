@@ -15,8 +15,8 @@ function safeGetChannels(options, key, max) {
 		const raw = Array.isArray(options[key]) ? options[key] : [options[key]]
 
 		return raw.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 1 && n <= max)
-	} catch (err) {
-		console.error(`Error parsing channels for ${key}:`, err)
+	} catch {
+		// Defensive: malformed options yield no channels (no instance logger available here)
 		return []
 	}
 }
