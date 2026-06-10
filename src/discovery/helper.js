@@ -96,6 +96,11 @@ class DiscoveryHelper extends EventEmitter {
 				this._logPrerequisiteHint(code)
 			}
 			this.proc = null
+			try {
+				this.rl?.close()
+			} catch (_) {
+				/* ignore */
+			}
 			this.rl = null
 			if (!this.expectedExit) {
 				this.emit('helper-exit', { code, signal, unexpected: true })
@@ -173,6 +178,12 @@ class DiscoveryHelper extends EventEmitter {
 				/* ignore */
 			}
 		}
+		try {
+			this.rl?.close()
+		} catch (_) {
+			/* ignore */
+		}
+		this.rl = null
 		this.devices.clear()
 	}
 

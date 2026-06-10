@@ -310,9 +310,9 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					ushaping_selected_output_num: chs.join(','),
 				})
 
-				// Update dynamic current value variables
-				if (typeof self._updateUShapingCurrentValues === 'function') {
-					self._updateUShapingCurrentValues()
+				// Update dynamic current value variables (output-side controls)
+				if (typeof self._updateUShapingOutputCurrentValues === 'function') {
+					self._updateUShapingOutputCurrentValues()
 				}
 			}
 
@@ -923,9 +923,9 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					eq_selected_output_num: chs.join(','),
 				})
 
-				// Update dynamic current value variables
-				if (typeof self._updateEQCurrentValues === 'function') {
-					self._updateEQCurrentValues()
+				// Update dynamic current value variables (output-side controls)
+				if (typeof self._updateEQOutputCurrentValues === 'function') {
+					self._updateEQOutputCurrentValues()
 				}
 			}
 
@@ -2511,7 +2511,7 @@ function registerOutputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					continue
 				}
 
-				const wantEngaged = op === 'Enabled'
+				const wantEngaged = op === 'on'
 				const bypass = !wantEngaged
 				if (typeof self._setOutputHighpassBypass === 'function') {
 					self._setOutputHighpassBypass(ch, bypass)

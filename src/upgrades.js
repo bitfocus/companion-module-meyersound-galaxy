@@ -36,12 +36,9 @@ module.exports = [
 			// Matrix actions: mi/mo → matrix_inputs/matrix_outputs
 			matrix_gain: { mi: 'matrix_inputs', mo: 'matrix_outputs' },
 			matrix_delay_full: { mi: 'matrix_inputs', mo: 'matrix_outputs' },
-			// Link group actions: channels → chs
-			input_link_group_assign: { channels: 'chs' },
-			output_link_group_assign: { channels: 'chs' },
-			// EQ actions: freq_value/freq_delta → frequency_value/frequency_delta
-			input_eq_knob_frequency: { freq_value: 'frequency_value' },
-			input_eq_nudge_frequency: { freq_delta: 'frequency_delta' },
+			// EQ frequency action: legacy freq_value/freq_delta → frequency_value/frequency_delta.
+			// (input_eq_knob_frequency carries both the set value and the nudge delta.)
+			input_eq_knob_frequency: { freq_value: 'frequency_value', freq_delta: 'frequency_delta' },
 		}
 
 		// Feedback ID renames

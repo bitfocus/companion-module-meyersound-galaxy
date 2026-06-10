@@ -97,7 +97,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 	// state + the output_<ch>_name variable.
 	const applyChannelName = (ch, prefix, suffix) => {
 		const p = String(prefix || '').trim()
-		const channelName = p ? (suffix ? `${p} ${suffix}` : p) : `Output ${ch}`
+		const channelName = (p ? (suffix ? `${p} ${suffix}` : p) : `Output ${ch}`).replace(/[\\'\r\n]/g, '')
 		self._cmdSendLine(`/device/output/${ch}/name='${channelName}'`)
 		if (!self.outputName) self.outputName = {}
 		self.outputName[ch] = channelName
@@ -1307,7 +1307,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						// Meyer Sound calculation method (matches Excel and official documentation)
 						// Uses Cartesian distance calculation from arc positions to reference line
 
-						const singleSplayDeg = arcAngleDeg / (n - 1)
+						const singleSplayDeg = arcAngleDeg / Math.max(1, n - 1) // max() avoids /0 (NaN delays) when numSubs === 1
 						const singleSplayRad = (singleSplayDeg * Math.PI) / 180
 						const AcC_virtual = -spacingM / singleSplayRad // Virtual acoustic center (negative radius)
 
@@ -1862,7 +1862,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 						// Meyer Sound calculation method (matches Excel and official documentation)
 						// Uses Cartesian distance calculation from arc positions to reference line
 
-						const singleSplayDeg = arcAngleDeg / (numSubs - 1)
+						const singleSplayDeg = arcAngleDeg / Math.max(1, numSubs - 1) // max() avoids /0 (NaN delays) when numSubs === 1
 						const singleSplayRad = (singleSplayDeg * Math.PI) / 180
 						const AcC_virtual = -spacingM / singleSplayRad // Virtual acoustic center (negative radius)
 
@@ -2117,7 +2117,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 					// Same arc math as the Array mode
 					const msAtIndex = (i) => {
 						if (arcAngleDeg === 0) return 0
-						const singleSplayDeg = arcAngleDeg / (n - 1)
+						const singleSplayDeg = arcAngleDeg / Math.max(1, n - 1) // max() avoids /0 (NaN delays) when numSubs === 1
 						const singleSplayRad = (singleSplayDeg * Math.PI) / 180
 						const AcC_virtual = -spacingM / singleSplayRad
 						const baseAngleDeg = n % 2 === 0 ? singleSplayDeg / 2 : 0

@@ -299,6 +299,13 @@ class ModuleInstance extends InstanceBase {
 		this.inputEQ = {} // { ch: { bypass: bool, band: { gain, frequency, bandwidth, band_bypass } } }
 		this._eqKnobControl = { selectedInputs: [1], selectedBand: 1 }
 
+		// Output-side knob controls (mirror the input ones; the output U-Shaping/EQ
+		// "select output" + knob actions and their _update*OutputCurrentValues read these).
+		this.outputUShaping = {}
+		this._ushapingKnobControlOutput = { selectedOutputs: [1], selectedBand: 1 }
+		this.outputEQ = {}
+		this._eqKnobControlOutput = { selectedOutputs: [1], selectedBand: 1 }
+
 		// Discovered Galaxys — single source of truth, populated by the
 		// native ATDECC helper (LAN) and the localhost virtual scanner.
 		// Shape preserved from the old bonjour-based code so the rest of
@@ -1310,7 +1317,7 @@ class ModuleInstance extends InstanceBase {
 		// access privilege
 		const priv = this._parseAccessPrivilege(line)
 		if (priv !== undefined) {
-			this.accessPrivilege = BigInt(priv)
+			this.accessPrivilege = priv // already a validated BigInt
 			this.setVariableValues({ access_privilege: String(priv) })
 			this.checkFeedbacks('access_priv_equals')
 			this.checkFeedbacks('access_priv_has')
@@ -4491,7 +4498,9 @@ class ModuleInstance extends InstanceBase {
 			try {
 				sock.destroy()
 			} catch {}
-			if (!name) return
+			// A fetch can still resolve after the instance is torn down; don't schedule
+			// refreshes / mutate state on a dead instance.
+			if (!name || this._destroyed) return
 			const cur = this._mdnsDevices.find((d) => d.key === key)
 			if (!cur) return
 			cur.name = name

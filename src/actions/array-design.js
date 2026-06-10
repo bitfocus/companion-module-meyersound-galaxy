@@ -518,7 +518,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 							}
 						}
 
-						self._cmdSendLine(`/device/output/${outputNum}/name='${channelName}'`)
+						self._cmdSendLine(`/device/output/${outputNum}/name='${channelName.replace(/[\\'\r\n]/g, '')}'`)
 						// Update local state
 						if (!self.outputName) self.outputName = {}
 						self.outputName[outputNum] = channelName
@@ -815,7 +815,9 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					const channelPrefix = String(e.options?.channel_prefix || '').trim()
 					if (channelPrefix && channelPrefix !== 'Output') {
 						// Use the custom prefix as the array name
-						self._cmdSendLine(`/processing/beam_control_array/${arrayIndex}/name='${channelPrefix}'`)
+						self._cmdSendLine(
+							`/processing/beam_control_array/${arrayIndex}/name='${channelPrefix.replace(/[\\'\r\n]/g, '')}'`,
+						)
 						// Update local state
 						if (!self.beamControlArrayName) self.beamControlArrayName = {}
 						self.beamControlArrayName[arrayIndex] = channelPrefix
