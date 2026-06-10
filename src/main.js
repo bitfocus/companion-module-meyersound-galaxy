@@ -35,9 +35,9 @@ const SAMPLES_PER_MS = 96 // Sample rate conversion: 96 samples = 1ms @ 96kHz
 // Timing constants (in milliseconds)
 const RECONNECT_DELAY_MS = 1000 // Initial delay before attempting to reconnect subscription socket
 const RECONNECT_MAX_DELAY_MS = 30000 // Maximum delay between reconnection attempts (30 seconds)
-const RECONNECT_MAX_ATTEMPTS = 0 // Maximum reconnection attempts (0 = infinite retries)
 const CMD_SOCKET_TIMEOUT_MS = 1500 // Time to keep command socket alive after last command
 const CMD_SOCKET_RETRY_MS = 800 // Delay before retrying failed command socket connection
+const CONNECT_TIMEOUT_MS = 8000 // Abort a stuck TCP connect instead of waiting for the OS (~75s)
 const METER_BATCH_INTERVAL_MS = 100 // Batch meter updates to reduce UI thrashing
 const UI_REFRESH_DEBOUNCE_MS = 150 // Debounce delay for actions/feedbacks/variables refresh
 const PRESET_REFRESH_DEBOUNCE_MS = 250 // Debounce delay for preset refresh (slightly longer)
@@ -245,8 +245,6 @@ class ModuleInstance extends InstanceBase {
 
 		// fades (generic)
 		this._fades = new Map()
-		this._gainFadesIn = {}
-		this._gainFadesOut = {}
 
 		// ===== Previous gain tracking (per-channel + per-button) =====
 		// Channel-scoped "previous" gain (last captured before a set)
@@ -380,8 +378,6 @@ class ModuleInstance extends InstanceBase {
 	async destroy() {
 		this._destroyed = true
 		this._stopAllFades()
-		this._stopAllInputFades()
-		this._stopAllOutputFades()
 		this._stopOutputChase()
 		this._stopSpeakerFlashTimer()
 		this._stopDiscovery()
@@ -443,8 +439,6 @@ class ModuleInstance extends InstanceBase {
 		this._seedVariables()
 
 		this._stopAllFades()
-		this._stopAllInputFades()
-		this._stopAllOutputFades()
 		this._stopOutputChase()
 		this._stopSpeakerFlashTimer()
 
@@ -588,12 +582,6 @@ class ModuleInstance extends InstanceBase {
 			} catch {}
 			this._logHistoryFetched = false
 
-			// Check if we've exceeded max retry attempts (if limit is set)
-			if (RECONNECT_MAX_ATTEMPTS > 0 && this._reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
-				this.updateStatus(InstanceStatus.ConnectionFailure, 'Max reconnection attempts reached')
-				return
-			}
-
 			// Exponential backoff: double delay each time, up to max
 			this._reconnectAttempts++
 			this._reconnectDelay = Math.min(this._reconnectDelay * 2, RECONNECT_MAX_DELAY_MS)
@@ -629,7 +617,12 @@ class ModuleInstance extends InstanceBase {
 		})
 
 		this.updateStatus(InstanceStatus.Connecting, `Subscribing ${host}:${port}`)
+		// Abort a stuck connect rather than waiting on the OS TCP timeout; the close/error
+		// handler reconnects with backoff. Cleared on connect so a legitimately quiet — but
+		// alive — subscription stream isn't torn down for being idle.
+		sock.setTimeout(CONNECT_TIMEOUT_MS, () => sock.destroy())
 		sock.connect(port, host, () => {
+			sock.setTimeout(0)
 			this._refreshDiscoveryStatus()
 
 			// Subscribe inputs
@@ -1385,6 +1378,10 @@ class ModuleInstance extends InstanceBase {
 
 	// -------- Command socket with queue (quiet) --------
 	_ensureCmdSocket() {
+		// Don't open a transient command socket while tearing down. destroy() routes
+		// through _stopOutputChase → _muteAllOutputs, whose writes would otherwise spin
+		// up a short-lived socket that can't reliably flush before the instance dies.
+		if (this._destroyed) return
 		if (this.cmdSock || this.cmdConnecting) return
 		const { host, port } = this._resolveHostPortFromConfig()
 		if (!host || !port) return
@@ -1404,8 +1401,12 @@ class ModuleInstance extends InstanceBase {
 		sock.on('end', retry)
 		sock.on('close', retry)
 
+		// Abort a stuck connect (close handler retries); cleared on connect — the idle
+		// keep-alive close is handled separately by cmdTimer in _cmdFlush.
+		sock.setTimeout(CONNECT_TIMEOUT_MS, () => sock.destroy())
 		sock.connect(port, host, () => {
 			this.cmdConnecting = false
+			sock.setTimeout(0)
 			this._cmdFlush()
 		})
 	}
@@ -1908,16 +1909,6 @@ class ModuleInstance extends InstanceBase {
 		this._cmdSendLine(`/processing/input/${c}/gain=${next}`)
 		this._applyInputGain(c, next)
 	}
-	_stopInputFade(ch) {
-		const key = `in-${ch}`
-		this._stopFade(key)
-		const f = this._gainFadesIn[ch]
-		if (f && f.timer) clearTimeout(f.timer)
-		this._gainFadesIn[ch] = null
-	}
-	_stopAllInputFades() {
-		for (const k of Object.keys(this._gainFadesIn)) this._stopInputFade(Number(k))
-	}
 	_startInputGainFade(ch, targetDb, durationMs, curve) {
 		const c = Math.max(1, Math.min(NUM_INPUTS, Number(ch)))
 		const cur = Number(this.inputGain[c])
@@ -1950,16 +1941,6 @@ class ModuleInstance extends InstanceBase {
 		const next = roundTenth(clampDb(base + Number(deltaDb || 0)))
 		this._cmdSendLine(`/processing/output/${c}/gain=${next}`)
 		this._applyOutputGain(c, next)
-	}
-	_stopOutputFade(ch) {
-		const key = `out-${ch}`
-		this._stopFade(key)
-		const f = this._gainFadesOut[ch]
-		if (f && f.timer) clearTimeout(f.timer)
-		this._gainFadesOut[ch] = null
-	}
-	_stopAllOutputFades() {
-		for (const k of Object.keys(this._gainFadesOut)) this._stopOutputFade(Number(k))
 	}
 	_startOutputGainFade(ch, targetDb, durationMs, curve) {
 		const c = Math.max(1, Math.min(NUM_OUTPUTS, Number(ch)))
@@ -2815,6 +2796,7 @@ class ModuleInstance extends InstanceBase {
 					t.pending = rounded
 					t.pendingSince = now
 					setTimeout(() => {
+						if (this._destroyed) return
 						const cur = this._inputGainTrack?.[ch]
 						if (!cur) return
 						if (cur.pending === rounded && cur.pendingSince && Date.now() - cur.pendingSince >= 1000) {
@@ -2871,6 +2853,7 @@ class ModuleInstance extends InstanceBase {
 					t.pending = rounded
 					t.pendingSince = now
 					setTimeout(() => {
+						if (this._destroyed) return
 						const cur = this._outputGainTrack?.[ch]
 						if (!cur) return
 						if (cur.pending === rounded && cur.pendingSince && Date.now() - cur.pendingSince >= 1000) {
@@ -4082,8 +4065,11 @@ class ModuleInstance extends InstanceBase {
 		if (!/\/system\/access\/1\/privilege\b/i.test(text)) return undefined
 		const rhs = this._extractRightHandValue(text)
 		if (rhs == null) return undefined
-		const v = BigInt(rhs)
-		return v
+		// Privilege is an integer bitmask. BigInt() throws a SyntaxError on floats,
+		// empty strings, or text, so only accept a clean (optionally signed) integer.
+		const s = String(rhs).trim()
+		if (!/^[+-]?\d+$/.test(s)) return undefined
+		return BigInt(s)
 	}
 	_parseSnapshotValue(text) {
 		let m = text.match(/\/project\/snapshot\/(active|\d+)\/([a-z_]+)\b/i)
@@ -4370,12 +4356,16 @@ class ModuleInstance extends InstanceBase {
 		this._discoveryHelper.on('device-removed', (dev) => this._onDeviceLost(dev.entity_id))
 		this._discoveryHelper.start()
 
-		// Local: TCP port-probe on 127.0.0.1 for virtual Galaxy instances.
-		this._virtScan = new VirtualGalaxyScanner({ log: (l, m) => this.log(l, m) })
-		this._virtScan.on('virtual-added', (v) => this._onVirtualDiscovered(v))
-		this._virtScan.on('virtual-updated', (v) => this._onVirtualDiscovered(v))
-		this._virtScan.on('virtual-removed', (v) => this._onDeviceLost(v.entity_id))
-		this._virtScan.start()
+		// Local: TCP port-probe on 127.0.0.1 for virtual Galaxy instances. Only useful
+		// for virtual connections, so skip the periodic 60-socket probe on physical
+		// installs where it's pure churn (gated on connection_type).
+		if (this.config?.connection_type === 'virtual') {
+			this._virtScan = new VirtualGalaxyScanner({ log: (l, m) => this.log(l, m) })
+			this._virtScan.on('virtual-added', (v) => this._onVirtualDiscovered(v))
+			this._virtScan.on('virtual-updated', (v) => this._onVirtualDiscovered(v))
+			this._virtScan.on('virtual-removed', (v) => this._onDeviceLost(v.entity_id))
+			this._virtScan.start()
+		}
 	}
 
 	_stopDiscovery() {

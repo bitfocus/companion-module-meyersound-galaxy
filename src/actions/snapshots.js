@@ -262,8 +262,10 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 			// CREATE
 			else if (operation === 'create') {
-				const name = await self.parseVariablesInString(String(e.options.snapshot_name ?? ''))
-				const comment = await self.parseVariablesInString(String(e.options.snapshot_comment ?? ''))
+				// snapshot_name/comment are textinput with useVariables:true, which base
+				// (>=1.13) auto-parses before the callback, so read the values directly.
+				const name = String(e.options.snapshot_name ?? '')
+				const comment = String(e.options.snapshot_comment ?? '')
 
 				self._cmdSendLine(`:create_snapshot ${quoteSnapshotArg(name)} ${quoteSnapshotArg(comment)}`)
 				self.log?.('info', `Snapshot: create requested (name="${name}" comment="${comment}")`)
@@ -334,8 +336,10 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					return
 				}
 
-				const name = await self.parseVariablesInString(String(e.options.snapshot_name ?? ''))
-				const comment = await self.parseVariablesInString(String(e.options.snapshot_comment ?? ''))
+				// snapshot_name/comment are textinput with useVariables:true, which base
+				// (>=1.13) auto-parses before the callback, so read the values directly.
+				const name = String(e.options.snapshot_name ?? '')
+				const comment = String(e.options.snapshot_comment ?? '')
 
 				if (name || comment) {
 					self._cmdSendBatch([
