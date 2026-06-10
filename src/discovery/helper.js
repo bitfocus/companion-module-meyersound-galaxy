@@ -12,12 +12,17 @@ const { EventEmitter } = require('node:events')
 const fs = require('node:fs')
 
 // Resolved relative to the running main.js so it works in both modes:
-//   - dev mode    → <module>/helper/prebuilt
+//   - dev mode    → <module>/helper/prebuilt   (main.js lives in <module>/src,
+//                   so the binaries are one level up at <module>/helper/prebuilt)
 //   - companion-module-build pkg → <pkg>/prebuilt (extraFiles flattens it)
 const MODULE_DIR = path.dirname(process.argv[1] || '')
-const PREBUILT_DIR = fs.existsSync(path.join(MODULE_DIR, 'helper', 'prebuilt'))
-	? path.join(MODULE_DIR, 'helper', 'prebuilt')
-	: path.join(MODULE_DIR, 'prebuilt')
+const PREBUILT_CANDIDATES = [
+	path.join(MODULE_DIR, 'helper', 'prebuilt'), // older flat dev layout
+	path.join(MODULE_DIR, '..', 'helper', 'prebuilt'), // dev: main.js under src/
+	path.join(MODULE_DIR, 'prebuilt'), // packaged: extraFiles flattens it
+]
+const PREBUILT_DIR =
+	PREBUILT_CANDIDATES.find((p) => fs.existsSync(p)) || PREBUILT_CANDIDATES[PREBUILT_CANDIDATES.length - 1]
 
 function helperBinaryName() {
 	const target =
@@ -51,7 +56,10 @@ class DiscoveryHelper extends EventEmitter {
 		// Clear any pending restart so back-to-back start() calls (e.g. a
 		// rapid disable→enable cycle in Companion) can't leave a second
 		// restartTimer firing into a new process.
-		if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null }
+		if (this.restartTimer) {
+			clearTimeout(this.restartTimer)
+			this.restartTimer = null
+		}
 
 		const bin = helperBinaryPath()
 		this.log('info', `spawning ${bin}`)
@@ -106,50 +114,75 @@ class DiscoveryHelper extends EventEmitter {
 		if (process.platform === 'win32') {
 			// 0xC0000135 = STATUS_DLL_NOT_FOUND. Node surfaces it as a
 			// signed int32, which is -1073741515.
-			if (exitCode === -1073741515 || exitCode === 0xC0000135) {
-				this.log('error',
+			if (exitCode === -1073741515 || exitCode === 0xc0000135) {
+				this.log(
+					'error',
 					'Discovery helper failed to start: wpcap.dll not found. ' +
-					'Install Npcap from https://npcap.com — pick the default ' +
-					'install options and re-enable this connection.')
+						'Install Npcap from https://npcap.com — pick the default ' +
+						'install options and re-enable this connection.',
+				)
 				return
 			}
-			this.log('warn',
+			this.log(
+				'warn',
 				'Discovery helper exited before reporting ready. If you have ' +
-				'not installed Npcap (https://npcap.com), do that first.')
+					'not installed Npcap (https://npcap.com), do that first.',
+			)
 			return
 		}
 		if (process.platform === 'darwin') {
-			this.log('warn',
+			this.log(
+				'warn',
 				'Discovery helper exited before reporting ready. If the ' +
-				'preceding error mentioned BPF permission denied, add this ' +
-				'user to the access_bpf group: ' +
-				'sudo dseditgroup -o edit -a $USER -t user access_bpf, ' +
-				'then log out and back in.')
+					'preceding error mentioned BPF permission denied, add this ' +
+					'user to the access_bpf group: ' +
+					'sudo dseditgroup -o edit -a $USER -t user access_bpf, ' +
+					'then log out and back in.',
+			)
 			return
 		}
 		if (process.platform === 'linux') {
-			this.log('warn',
+			this.log(
+				'warn',
 				'Discovery helper exited before reporting ready. If the ' +
-				'preceding error mentioned EPERM, grant the helper binary ' +
-				'CAP_NET_RAW: sudo setcap cap_net_raw=eip <path-to-helper>.')
+					'preceding error mentioned EPERM, grant the helper binary ' +
+					'CAP_NET_RAW: sudo setcap cap_net_raw=eip <path-to-helper>.',
+			)
 		}
 	}
 
 	stop() {
 		this.expectedExit = true
-		if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null }
-		if (this.expireTimer) { clearInterval(this.expireTimer); this.expireTimer = null }
+		if (this.restartTimer) {
+			clearTimeout(this.restartTimer)
+			this.restartTimer = null
+		}
+		if (this.expireTimer) {
+			clearInterval(this.expireTimer)
+			this.expireTimer = null
+		}
 		if (this.proc) {
-			try { this.proc.stdin.end() } catch (_) { /* ignore */ }
-			try { this.proc.kill('SIGTERM') } catch (_) { /* ignore */ }
+			try {
+				this.proc.stdin.end()
+			} catch (_) {
+				/* ignore */
+			}
+			try {
+				this.proc.kill('SIGTERM')
+			} catch (_) {
+				/* ignore */
+			}
 		}
 		this.devices.clear()
 	}
 
 	_onLine(line) {
 		let msg
-		try { msg = JSON.parse(line) } catch (_) {
-			this.log('debug', `non-JSON line: ${line}`); return
+		try {
+			msg = JSON.parse(line)
+		} catch (_) {
+			this.log('debug', `non-JSON line: ${line}`)
+			return
 		}
 		switch (msg.event) {
 			case 'ready':
