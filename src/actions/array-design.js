@@ -1,6 +1,6 @@
 // actions/array-design.js
 // Advanced array design actions: Line array design, LMBC
-const { rangeChoices } = require('../helpers')
+const { buildOutputChoices } = require('../helpers')
 
 /**
  * Register array design related actions
@@ -273,7 +273,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				id: 'start_output',
 				label: 'Starting output',
 				default: '1',
-				choices: rangeChoices(NUM_OUTPUTS, 'Output '),
+				choices: buildOutputChoices(self, NUM_OUTPUTS),
 			},
 
 			// Spread phase options - one per speaker
