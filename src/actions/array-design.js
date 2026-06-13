@@ -944,12 +944,11 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				tooltip: 'Total number of elements in the array (8-32)',
 			},
 			{
-				type: 'number',
+				type: 'dropdown',
 				id: 'starting_output',
 				label: 'Starting Output',
-				default: 1,
-				min: 1,
-				max: NUM_OUTPUTS,
+				default: '1',
+				choices: buildOutputChoices(self, NUM_OUTPUTS),
 				tooltip: 'First output channel for the array',
 			},
 			{
