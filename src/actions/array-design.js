@@ -252,6 +252,10 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				default: '',
 				choices: lineArraySpeakerChoices,
 			},
+
+			// Phase curve — directly under the chosen loudspeaker for consistency (one per speaker)
+			...lineArrayPhaseOptions,
+
 			{
 				type: 'number',
 				id: 'primary_elements',
@@ -266,7 +270,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'Number of elements per output',
 				default: 1,
 				min: 1,
-				max: 2,
+				max: 8,
 			},
 			{
 				type: 'dropdown',
@@ -275,9 +279,6 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				default: '1',
 				choices: buildOutputChoices(self, NUM_OUTPUTS),
 			},
-
-			// Spread phase options - one per speaker
-			...lineArrayPhaseOptions,
 
 			// Spread primary starting point options - one per speaker
 			...lineArrayPrimaryStartingPointOptions,
@@ -330,6 +331,8 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				default: false,
 				tooltip: 'Enable Low-Mid Beam Control for this line array',
 				isVisible: (o) => {
+					// LMBC is only available with 1–2 elements per output; hide it for 3+.
+					if (Number(o.elements_per_output) >= 3) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
 						return false
@@ -354,7 +357,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: getBeamControlArrayChoices(),
 				tooltip: 'Select which beam control array to configure (1-4)',
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false
+					if (o.enable_lmbc !== true || Number(o.elements_per_output) >= 3) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
 						return false
@@ -380,7 +383,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				max: 99,
 				tooltip: 'Total beam angle in degrees (10-99)',
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false
+					if (o.enable_lmbc !== true || Number(o.elements_per_output) >= 3) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
 						return false
@@ -408,7 +411,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				],
 				tooltip: 'Beam control type: Spread or Steer Up',
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false
+					if (o.enable_lmbc !== true || Number(o.elements_per_output) >= 3) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
 						return false
@@ -434,7 +437,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				max: 32,
 				tooltip: 'First element number in the array (1-32)',
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false
+					if (o.enable_lmbc !== true || Number(o.elements_per_output) >= 3) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
 						return false
@@ -457,7 +460,7 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				label: 'LMBC Status',
 				value: lmbcStatusPreview(1),
 				isVisible: (o) => {
-					if (o.enable_lmbc !== true) return false
+					if (o.enable_lmbc !== true || Number(o.elements_per_output) >= 3) return false
 					// Must have a valid primary speaker (not empty, not M1D)
 					if (!o.primary_speaker || o.primary_speaker === '' || o.primary_speaker === 'M1D') {
 						return false
