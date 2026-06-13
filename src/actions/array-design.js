@@ -1,6 +1,7 @@
 // actions/array-design.js
 // Advanced array design actions: Line array design, LMBC
 const { buildOutputChoices } = require('../helpers')
+const { FACTORY_RESET_COMMANDS } = require('../actions-data')
 
 /**
  * Register array design related actions
@@ -477,10 +478,18 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					return true
 				},
 			},
+			{
+				type: 'checkbox',
+				id: 'reset_line_array',
+				label: 'Reset channels to factory defaults before applying',
+				default: false,
+				tooltip: 'Send a factory reset to each target output before applying the line array settings',
+			},
 		],
 		callback: async (e) => {
 			try {
 				const primarySpeaker = String(e.options.primary_speaker || '')
+				const shouldReset = e.options.reset_line_array === true
 				const primaryElements = Number(e.options.primary_elements) || 12
 				const elementsPerOutput = Number(e.options.elements_per_output) || 1
 				const startOutput = Number(e.options.start_output) || 1
@@ -643,6 +652,11 @@ function registerArrayDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				for (let i = 0; i < numOutputs; i++) {
 					const outputNum = startOutput + i
 					if (outputNum > NUM_OUTPUTS) break
+
+					// Optionally reset this output to factory defaults before applying settings
+					if (shouldReset) {
+						for (const rc of FACTORY_RESET_COMMANDS) self._cmdSendLine(rc.replace(/\{ch\}/g, outputNum))
+					}
 
 					// Determine if this output is primary or secondary
 					const isPrimary = i < primaryOutputs
