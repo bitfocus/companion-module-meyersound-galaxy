@@ -18,12 +18,17 @@ function subassistPreview(self) {
 }
 
 /**
- * Status line for the action: standby until run, then the applied summary or the reason it failed.
+ * Status line for the action, per mode: standby until run in that mode, then the applied
+ * summary or the reason it failed. Status is stored per mode so switching the Mode dropdown
+ * never shows another mode's stale result — each mode shows its own status (or standby).
  * @param {Object} self - Module instance
+ * @param {string} mode - Sub Design Assist mode the status line belongs to
  * @returns {string} Status text
  */
-function statusPreview(self) {
-	return self?._subassistStatus || 'Standby — press the button to apply.'
+function statusPreview(self, mode) {
+	const store = self?._subassistStatus
+	const msg = store && typeof store === 'object' ? store[mode] : undefined
+	return msg || 'Standby — press the button to apply.'
 }
 
 /**
@@ -112,13 +117,24 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		return a === b ? `${a}` : `${a} & ${b}`
 	}
 
-	// Update the action's Status line (standby / applied summary / reason it failed) and re-render.
+	// Mode the current button press is applying — set at callback entry so setStatus()
+	// writes the result against the right mode's status line.
+	let subassistApplyMode = null
+
+	// Update the action's Status line for the mode being applied (standby / applied summary /
+	// reason it failed) and re-render. Stored per mode so changing Mode resets the line.
 	const setStatus = (msg) => {
-		self._subassistStatus = msg
+		if (!self._subassistStatus || typeof self._subassistStatus !== 'object') self._subassistStatus = {}
+		if (subassistApplyMode) self._subassistStatus[subassistApplyMode] = msg
 		try {
 			self.updateActions?.()
 		} catch {}
 	}
+
+	// Sub Design Assist modes — must match the Mode dropdown choices below. Used to render one
+	// Status line per mode (gated by isVisibleExpression) so changing Mode shows that mode's
+	// status (Standby until applied), never the previously selected mode's stale result.
+	const SUBASSIST_MODES = ['array', 'array_endfire', 'array_gradient', 'endfire', 'endfire_gradient', 'gradient']
 
 	// Validate that a set of contiguous output blocks fit the device and don't overlap.
 	// blocks: [{ label, start, count }]. Returns a human-readable reason string, or null if OK.
@@ -291,12 +307,13 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 	actions['subassist_combined'] = {
 		name: 'Sub Design Assist',
 		options: [
-			{
+			...SUBASSIST_MODES.map((m) => ({
 				type: 'static-text',
-				id: 'status',
+				id: `status_${m}`,
 				label: 'Status',
-				value: statusPreview(self),
-			},
+				value: statusPreview(self, m),
+				isVisibleExpression: `$(options:mode) == '${m}'`,
+			})),
 			{
 				type: 'dropdown',
 				id: 'mode',
@@ -1118,6 +1135,7 @@ function registerSubwooferDesignActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) 
 		],
 		callback: async (e) => {
 			const mode = e.options.mode
+			subassistApplyMode = mode // status writes target this mode's line
 
 			if (mode === 'endfire') {
 				// Execute End-Fire logic
