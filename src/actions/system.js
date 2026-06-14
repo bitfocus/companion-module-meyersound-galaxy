@@ -29,7 +29,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 
 	actions['set_group_name'] = {
-		name: 'Entity: Set Group Name',
+		name: 'Entity: Set Milan Group Name',
 		options: [
 			{
 				type: 'textinput',
