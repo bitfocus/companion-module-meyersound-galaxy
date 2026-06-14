@@ -57,11 +57,6 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				return
 			}
 			const linkOpts = linkOptsFrom(e.options)
-			// TEMP diagnostic for the per-action Link toggle — remove once confirmed.
-			self.log?.(
-				'info',
-				`[link-debug] Inputs:Mute link_enable=${JSON.stringify(e.options.link_enable)} -> ${linkOpts.noLink ? 'NOT mirrored (noLink)' : 'mirrored'} | linkActive=${!!self._linkActive}`,
-			)
 			for (const ch of chs) {
 				if (op === 'on' && typeof self._setMute === 'function') self._setMute('input', ch, true, linkOpts)
 				else if (op === 'off' && typeof self._setMute === 'function') self._setMute('input', ch, false, linkOpts)
