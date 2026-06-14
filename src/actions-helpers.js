@@ -99,6 +99,33 @@ function buildActiveSnapshotLabel(self) {
 	return `Active snapshot: ${pieces.join(' — ')}`
 }
 
+/**
+ * Reusable "Link" checkbox for the top of an action's options. Lets a specific button
+ * opt out of Link ID mirroring. Returns a fresh object each call so option defs are not
+ * shared by reference between actions.
+ * @returns {Object} A Companion checkbox input field definition
+ */
+function linkEnableOption() {
+	return {
+		type: 'checkbox',
+		id: 'link_enable',
+		label: 'Link',
+		default: true,
+		tooltip:
+			'When on, this action is also mirrored to other Galaxy connections that share the same Link ID. Turn off to affect only this connection.',
+	}
+}
+
+/**
+ * Translate the Link checkbox into _cmdSendLine options. Missing/true → mirror (link on);
+ * false → noLink so this action is not mirrored to linked connections.
+ * @param {Object} options - Action options object
+ * @returns {{noLink: boolean}} Options to pass through to the send helpers / _cmdSendLine
+ */
+function linkOptsFrom(options) {
+	return { noLink: options?.link_enable === false }
+}
+
 module.exports = {
 	safeGetChannels,
 	speedOfSound_mps,
@@ -106,4 +133,6 @@ module.exports = {
 	buildMatrixOutputChoices,
 	quoteSnapshotArg,
 	buildActiveSnapshotLabel,
+	linkEnableOption,
+	linkOptsFrom,
 }

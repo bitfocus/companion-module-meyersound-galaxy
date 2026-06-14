@@ -1718,16 +1718,16 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	// ====== Mutes ======
-	_setMute(kind, ch, state) {
+	_setMute(kind, ch, state, opts) {
 		const k = kind === 'input' ? 'input' : 'output'
 		const max = k === 'input' ? NUM_INPUTS : NUM_OUTPUTS
 		const c = Math.max(1, Math.min(max, Number(ch)))
-		this._cmdSendLine(`/processing/${k}/${c}/mute=${state ? 'true' : 'false'}`)
+		this._cmdSendLine(`/processing/${k}/${c}/mute=${state ? 'true' : 'false'}`, opts)
 	}
-	_toggleMute(kind, ch) {
+	_toggleMute(kind, ch, opts) {
 		const k = kind === 'input' ? 'input' : 'output'
 		const current = k === 'input' ? !!this.inMute[ch] : !!this.outMute[ch]
-		this._setMute(k, ch, !current)
+		this._setMute(k, ch, !current, opts)
 	}
 	_setAll(kind, state) {
 		const k = kind === 'input' ? 'input' : 'output'

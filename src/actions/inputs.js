@@ -2,7 +2,7 @@
 // Input-related actions: mutes, gains, U-Shaping, Parametric EQ
 
 const { rangeChoices, buildInputChoices, nn } = require('../helpers')
-const { safeGetChannels } = require('../actions-helpers')
+const { safeGetChannels, linkEnableOption, linkOptsFrom } = require('../actions-helpers')
 
 /**
  * Register input-related actions
@@ -27,6 +27,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	actions['input_mute_control'] = {
 		name: 'Inputs: Mute',
 		options: [
+			linkEnableOption(),
 			{
 				type: 'dropdown',
 				id: 'operation',
@@ -55,10 +56,11 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				self.log?.('warn', 'No valid input channels selected')
 				return
 			}
+			const linkOpts = linkOptsFrom(e.options)
 			for (const ch of chs) {
-				if (op === 'on' && typeof self._setMute === 'function') self._setMute('input', ch, true)
-				else if (op === 'off' && typeof self._setMute === 'function') self._setMute('input', ch, false)
-				else if (typeof self._toggleMute === 'function') self._toggleMute('input', ch)
+				if (op === 'on' && typeof self._setMute === 'function') self._setMute('input', ch, true, linkOpts)
+				else if (op === 'off' && typeof self._setMute === 'function') self._setMute('input', ch, false, linkOpts)
+				else if (typeof self._toggleMute === 'function') self._toggleMute('input', ch, linkOpts)
 			}
 		},
 	}
