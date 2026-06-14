@@ -105,11 +105,12 @@ function buildActiveSnapshotLabel(self) {
  * are not shared by reference between actions.
  * @returns {Object} A Companion checkbox input field definition
  */
-function linkEnableOption() {
+function linkEnableOption(linkId) {
+	const id = String(linkId ?? '').trim()
 	return {
 		type: 'checkbox',
 		id: 'link_enable',
-		label: 'Global Link',
+		label: id ? `Global Link (${id})` : 'Global Link',
 		default: true,
 		tooltip:
 			'When on, this action is also sent to other Galaxy connections that share the same Link ID. Turn off to affect only this connection.',
@@ -118,15 +119,16 @@ function linkEnableOption() {
 
 /**
  * Spread helper: include the Global Link checkbox only when this connection actually has a
- * Link ID configured, so it stays hidden when nothing is linked. configUpdated() re-runs
- * updateActions(), so it appears/disappears as soon as the Link ID is set or cleared.
+ * Link ID configured, so it stays hidden when nothing is linked. The current Link ID is shown
+ * in the label. configUpdated() re-runs updateActions(), so the checkbox (and its label)
+ * appears/updates/disappears as soon as the Link ID is set, changed, or cleared.
  * Usage in an options array: `...linkEnableOptions(self),`
  * @param {Object} self - Module instance
- * @returns {Array} [] when no Link ID is set, otherwise [linkEnableOption()]
+ * @returns {Array} [] when no Link ID is set, otherwise [linkEnableOption(linkId)]
  */
 function linkEnableOptions(self) {
-	const hasLink = String(self?.config?.link_id || '').trim() !== ''
-	return hasLink ? [linkEnableOption()] : []
+	const linkId = String(self?.config?.link_id || '').trim()
+	return linkId ? [linkEnableOption(linkId)] : []
 }
 
 /**
