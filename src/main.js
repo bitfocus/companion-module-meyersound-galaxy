@@ -172,6 +172,11 @@ class ModuleInstance extends InstanceBase {
 		// cross-instance link bus (mirror commands to connections sharing a Link ID)
 		this._linkBus = null
 		this._linkActive = true // runtime toggle; false = temporarily isolate this connection
+		// Per-action link context: the action wrapper (actions/index.js) sets this to
+		// { noLink: true } for the duration of a callback whose Global Link box is off, so
+		// _cmdSendLine/_cmdSendBatch suppress mirroring for that action without threading
+		// opts through every send helper. Explicit opts passed to a send still take priority.
+		this._linkOpts = null
 		this._originId = this.id || `lk-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
 
 		// state caches
@@ -1422,13 +1427,16 @@ class ModuleInstance extends InstanceBase {
 		this.cmdQueue.push(line)
 		this._cmdFlush()
 		// Mirror to linked instances unless linking is suspended, opted out, or this is a replay.
-		if (this._linkActive && (!opts || (!opts.noLink && !opts._fromLink))) this._linkBus?.send(line)
+		// Explicit opts win; otherwise fall back to the current action's link context (_linkOpts).
+		const eff = opts || this._linkOpts
+		if (this._linkActive && (!eff || (!eff.noLink && !eff._fromLink))) this._linkBus?.send(line)
 	}
 	_cmdSendBatch(lines, opts) {
 		if (lines?.length) {
 			this.cmdQueue.push(...lines)
 			this._cmdFlush()
-			if (this._linkActive && (!opts || !opts.noLink)) {
+			const eff = opts || this._linkOpts
+			if (this._linkActive && (!eff || !eff.noLink)) {
 				for (const l of lines) this._linkBus?.send(l)
 			}
 		}
@@ -1718,16 +1726,16 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	// ====== Mutes ======
-	_setMute(kind, ch, state, opts) {
+	_setMute(kind, ch, state) {
 		const k = kind === 'input' ? 'input' : 'output'
 		const max = k === 'input' ? NUM_INPUTS : NUM_OUTPUTS
 		const c = Math.max(1, Math.min(max, Number(ch)))
-		this._cmdSendLine(`/processing/${k}/${c}/mute=${state ? 'true' : 'false'}`, opts)
+		this._cmdSendLine(`/processing/${k}/${c}/mute=${state ? 'true' : 'false'}`)
 	}
-	_toggleMute(kind, ch, opts) {
+	_toggleMute(kind, ch) {
 		const k = kind === 'input' ? 'input' : 'output'
 		const current = k === 'input' ? !!this.inMute[ch] : !!this.outMute[ch]
-		this._setMute(k, ch, !current, opts)
+		this._setMute(k, ch, !current)
 	}
 	_setAll(kind, state) {
 		const k = kind === 'input' ? 'input' : 'output'
@@ -1922,13 +1930,16 @@ class ModuleInstance extends InstanceBase {
 		const startDb = Number.isFinite(cur) ? roundTenth(clampDb(cur)) : 0.0
 		const endDb = roundTenth(clampDb(Number(targetDb)))
 		const key = `in-${c}`
+		// Fade steps fire on a timer after the callback returns, so capture the link
+		// context now (the action wrapper will have reset _linkOpts by step time).
+		const linkOpts = this._linkOpts
 		this._startFade(key, {
 			start: startDb,
 			end: endDb,
 			durationMs: Number(durationMs),
 			curve,
 			onStep: (dbNow) => {
-				this._cmdSendLine(`/processing/input/${c}/gain=${dbNow}`)
+				this._cmdSendLine(`/processing/input/${c}/gain=${dbNow}`, linkOpts)
 				this._applyInputGain(c, dbNow)
 			},
 		})
@@ -1955,13 +1966,14 @@ class ModuleInstance extends InstanceBase {
 		const startDb = Number.isFinite(cur) ? roundTenth(clampDb(cur)) : 0.0
 		const endDb = roundTenth(clampDb(Number(targetDb)))
 		const key = `out-${c}`
+		const linkOpts = this._linkOpts
 		this._startFade(key, {
 			start: startDb,
 			end: endDb,
 			durationMs: Number(durationMs),
 			curve,
 			onStep: (dbNow) => {
-				this._cmdSendLine(`/processing/output/${c}/gain=${dbNow}`)
+				this._cmdSendLine(`/processing/output/${c}/gain=${dbNow}`, linkOpts)
 				this._applyOutputGain(c, dbNow)
 			},
 		})
@@ -2153,6 +2165,7 @@ class ModuleInstance extends InstanceBase {
 		const startDb = Number.isFinite(cur) ? roundTenth(clampDb(cur)) : 0.0
 		const endDb = roundTenth(clampDb(Number(targetDb)))
 		const key = `mx-${i}-[${targets.join(',')}]`
+		const linkOpts = this._linkOpts
 
 		this._startFade(key, {
 			start: startDb,
@@ -2165,7 +2178,7 @@ class ModuleInstance extends InstanceBase {
 					lines.push(`/processing/matrix/${i}/${o}/gain=${dbNow}`)
 					this._applyMatrixGain(i, o, dbNow)
 				}
-				this._cmdSendBatch(lines)
+				this._cmdSendBatch(lines, linkOpts)
 			},
 		})
 	}
