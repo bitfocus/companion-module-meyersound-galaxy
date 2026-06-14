@@ -2,7 +2,7 @@
 // Input-related actions: mutes, gains, U-Shaping, Parametric EQ
 
 const { rangeChoices, buildInputChoices, nn } = require('../helpers')
-const { safeGetChannels, linkEnableOption, linkOptsFrom } = require('../actions-helpers')
+const { safeGetChannels, linkEnableOptions, linkOptsFrom } = require('../actions-helpers')
 
 /**
  * Register input-related actions
@@ -27,7 +27,7 @@ function registerInputActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	actions['input_mute_control'] = {
 		name: 'Inputs: Mute',
 		options: [
-			linkEnableOption(),
+			...linkEnableOptions(self),
 			{
 				type: 'dropdown',
 				id: 'operation',

@@ -100,20 +100,33 @@ function buildActiveSnapshotLabel(self) {
 }
 
 /**
- * Reusable "Link" checkbox for the top of an action's options. Lets a specific button
- * opt out of Link ID mirroring. Returns a fresh object each call so option defs are not
- * shared by reference between actions.
+ * Reusable "Global Link" checkbox for the top of an action's options. Lets a specific
+ * button opt out of Link ID mirroring. Returns a fresh object each call so option defs
+ * are not shared by reference between actions.
  * @returns {Object} A Companion checkbox input field definition
  */
 function linkEnableOption() {
 	return {
 		type: 'checkbox',
 		id: 'link_enable',
-		label: 'Link',
+		label: 'Global Link',
 		default: true,
 		tooltip:
-			'When on, this action is also mirrored to other Galaxy connections that share the same Link ID. Turn off to affect only this connection.',
+			'When on, this action is also sent to other Galaxy connections that share the same Link ID. Turn off to affect only this connection.',
 	}
+}
+
+/**
+ * Spread helper: include the Global Link checkbox only when this connection actually has a
+ * Link ID configured, so it stays hidden when nothing is linked. configUpdated() re-runs
+ * updateActions(), so it appears/disappears as soon as the Link ID is set or cleared.
+ * Usage in an options array: `...linkEnableOptions(self),`
+ * @param {Object} self - Module instance
+ * @returns {Array} [] when no Link ID is set, otherwise [linkEnableOption()]
+ */
+function linkEnableOptions(self) {
+	const hasLink = String(self?.config?.link_id || '').trim() !== ''
+	return hasLink ? [linkEnableOption()] : []
 }
 
 /**
@@ -134,5 +147,6 @@ module.exports = {
 	quoteSnapshotArg,
 	buildActiveSnapshotLabel,
 	linkEnableOption,
+	linkEnableOptions,
 	linkOptsFrom,
 }
