@@ -100,7 +100,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 	// =========================
 
 	actions['connect_avb_input'] = {
-		name: 'AVB: Connect input stream',
+		name: 'MILAN: Connect input stream',
 		options: [
 			{
 				type: 'dropdown',
