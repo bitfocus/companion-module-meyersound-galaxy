@@ -71,7 +71,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '1', label: '1 - Analog' },
 					{ id: '2', label: '2 - AES3L' },
 					{ id: '3', label: '3 - AES3R' },
-					{ id: '4', label: '4 - AVB' },
+					{ id: '4', label: '4 - MILAN' },
 				],
 			},
 		],
@@ -727,7 +727,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 
 	actions['system_set_clock_source'] = {
 		name: 'System: Set clock source',
-		description: 'Change the Galaxy system clock source (optional input for AES/AVB/CRF).',
+		description: 'Change the Galaxy system clock source (optional input for AES/MILAN/CRF).',
 		options: [
 			{
 				type: 'dropdown',
@@ -737,7 +737,7 @@ function registerSystemActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 				choices: [
 					{ id: 'internal', label: 'Internal' },
 					{ id: 'aes', label: 'AES (digital)' },
-					{ id: 'avb', label: 'AVB' },
+					{ id: 'avb', label: 'MILAN' },
 					{ id: 'crf', label: 'CRF' },
 					{ id: 'bnc', label: 'BNC (Word Clock)' },
 				],

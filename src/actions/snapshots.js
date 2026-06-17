@@ -177,7 +177,7 @@ function registerSnapshotActions(actions, self, NUM_INPUTS, NUM_OUTPUTS) {
 			{
 				type: 'checkbox',
 				id: 'exclude_avb',
-				label: 'Exclude AVB Configuration',
+				label: 'Exclude MILAN Configuration',
 				default: false,
 				isVisibleExpression: "$(options:operation) == 'recall'",
 			},

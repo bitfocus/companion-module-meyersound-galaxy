@@ -323,7 +323,7 @@ module.exports = function UpdateFeedbacks(self, NUM_INPUTS, NUM_OUTPUTS) {
 					{ id: '1', label: 'Analog' },
 					{ id: '2', label: 'AES3L' },
 					{ id: '3', label: 'AES3R' },
-					{ id: '4', label: 'AVB' },
+					{ id: '4', label: 'MILAN' },
 				],
 			},
 			{
