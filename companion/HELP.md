@@ -24,6 +24,16 @@ Control your Meyer Sound Galaxy processors with real-time control, variables, an
 3. The module will automatically subscribe to all inputs, outputs, matrices, clocks, and status channels.
 4. Variables, feedbacks, and presets are instantly available.
 
+### Auto-discovery on Linux and Raspberry Pi (Companion Pi)
+
+The **Galaxy to control** list is filled by a small native helper that listens for the Galaxy's MILAN (ATDECC) announcements on the LAN. On Linux that requires raw network access. Companion Pi runs Companion as the unprivileged `companion` user, so after installing or updating this module grant the helper that single capability once:
+
+```
+sudo setcap cap_net_raw=eip /path/to/the/module/prebuilt/galaxy-discovery-helper-linux-arm64
+```
+
+Then disable and re-enable the connection. If the capability is missing, the connection log shows a "permission denied opening AF_PACKET socket" message followed by the exact command to run (with the real path). Everything else keeps working in the meantime: type the Galaxy's address into **IPv4 / IPv6 / mDNS address** and the module connects directly. The Linux helper binaries are statically linked, so they run unchanged on Raspberry Pi OS Bullseye and Bookworm (64-bit).
+
 ## Features
 
 ### Speaker Test
