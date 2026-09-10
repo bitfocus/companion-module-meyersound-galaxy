@@ -272,6 +272,42 @@ module.exports = function UpdateFeedbacks(self, NUM_INPUTS, NUM_OUTPUTS) {
 		},
 	}
 
+	feedbacks['snapshot_active_modified'] = {
+		type: 'boolean',
+		name: 'Snapshot: Active modified (unsaved changes)',
+		description:
+			'True when the currently active snapshot has been modified since it was recalled — live settings no longer match the stored snapshot. Use it to catch a snapshot that was tampered with before recalling another one.',
+		defaultStyle: { color: 0x000000, bgcolor: combineRgb(255, 145, 0) },
+		options: [],
+		callback: () => {
+			const raw = String(self?.snapshotValues?.snapshot_active_modified ?? '').trim()
+			return /^(true|1|on)$/i.test(raw)
+		},
+	}
+
+	feedbacks['snapshot_modified'] = {
+		type: 'boolean',
+		name: 'Snapshot: Modified (unsaved changes)',
+		description:
+			'True when the selected snapshot is flagged as modified (unsaved changes) by the device. The list follows every available snapshot.',
+		defaultStyle: { color: 0x000000, bgcolor: combineRgb(255, 145, 0) },
+		options: [
+			{
+				type: 'dropdown',
+				id: 'snapshot_id',
+				label: 'Snapshot',
+				default: snapshotChoices[0]?.id ?? '0',
+				choices: snapshotChoices,
+			},
+		],
+		callback: (fb) => {
+			const id = Number(fb.options.snapshot_id)
+			if (!Number.isFinite(id) || id < 0 || id > SNAPSHOT_MAX) return false
+			const raw = String(self?.snapshotValues?.[`snapshot_${id}_modified`] ?? '').trim()
+			return /^(true|1|on)$/i.test(raw)
+		},
+	}
+
 	// =========================
 	// ==== FEEDBACK: Mute All ==
 	// =========================

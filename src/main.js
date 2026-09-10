@@ -10,6 +10,7 @@ const { STARTING_POINTS_SOURCE, PRODUCT_INTEGRATION_DATA } = require('./actions-
 const { SNAPSHOT_MAX, displayBrightnessLabel, displayColorLabel } = require('./helpers')
 const { DiscoveryHelper } = require('./discovery/helper')
 const { VirtualGalaxyScanner } = require('./discovery/virtual-scan')
+const { MslgMdnsScanner } = require('./discovery/mdns-scan')
 const { macToIPv6LinkLocal, modelNameFromEntityModelId } = require('./discovery/galaxy-meta')
 const discoveryCache = require('./discovery/cache')
 const { LinkBus } = require('./link/bus')
@@ -3120,6 +3121,14 @@ class ModuleInstance extends InstanceBase {
 		if (/^snapshot_\d+_locked$/.test(varId)) {
 			this.checkFeedbacks?.('snapshot_locked')
 		}
+
+		if (varId === 'snapshot_active_modified') {
+			this.checkFeedbacks?.('snapshot_active_modified')
+		}
+
+		if (/^snapshot_\d+_modified$/.test(varId)) {
+			this.checkFeedbacks?.('snapshot_modified')
+		}
 	}
 
 	_applySnapshotBootId(value) {
@@ -4369,7 +4378,14 @@ class ModuleInstance extends InstanceBase {
 			/* already logged */
 		})
 		this._discoveryHelper.on('helper-exit', (info) => {
-			if (info.unexpected) this.log('warn', `discovery helper exited (code=${info.code}); restarting`)
+			// DiscoveryHelper logs its own explanation when it gives up.
+			if (!info.unexpected || !info.willRestart) return
+			// Keep the first few restarts visible; after that it's a boot-time
+			// "no interface yet" loop and 'debug' avoids flooding the log.
+			this.log(
+				info.attempt <= 3 ? 'warn' : 'debug',
+				`discovery helper exited (code=${info.code}); restarting in ${Math.round(info.delayMs / 1000)}s${info.attempt > 1 ? ` (retry ${info.attempt})` : ''}`,
+			)
 		})
 		this._discoveryHelper.on('device-added', (dev) => this._onRealDiscovered(dev))
 		this._discoveryHelper.on('device-updated', (dev) => this._onRealDiscovered(dev))
@@ -4386,6 +4402,16 @@ class ModuleInstance extends InstanceBase {
 		this._virtScan.on('virtual-updated', (v) => this._onVirtualDiscovered(v))
 		this._virtScan.on('virtual-removed', (v) => this._onDeviceLost(v.entity_id))
 		this._virtScan.start()
+
+		// LAN (control network): mDNS `_mslg._tcp` browser. Recovers Galaxys
+		// that announce over mDNS but emit no ATDECC ADP on this segment —
+		// the common case on a control / management network, where the ATDECC
+		// helper hears nothing. Feeds the same device list as the others.
+		this._mslgScan = new MslgMdnsScanner({ log: (l, m) => this.log(l, m) })
+		this._mslgScan.on('mslg-added', (d) => this._onMdnsDiscovered(d))
+		this._mslgScan.on('mslg-updated', (d) => this._onMdnsDiscovered(d))
+		this._mslgScan.on('mslg-removed', (d) => this._onDeviceLost(d.entity_id))
+		this._mslgScan.start()
 	}
 
 	_stopDiscovery() {
@@ -4409,6 +4435,12 @@ class ModuleInstance extends InstanceBase {
 			} catch {}
 			this._virtScan = null
 		}
+		if (this._mslgScan) {
+			try {
+				this._mslgScan.stop()
+			} catch {}
+			this._mslgScan = null
+		}
 	}
 
 	_onRealDiscovered(dev) {
@@ -4424,6 +4456,7 @@ class ModuleInstance extends InstanceBase {
 			name: prev?.name || '',
 			model: model || prev?.model || '',
 			serial: prev?.serial || '',
+			mac: (dev.src_mac || '').toLowerCase() || prev?.mac || '',
 		}
 		if (prev) Object.assign(prev, entry)
 		else this._mdnsDevices.push(entry)
@@ -4461,6 +4494,48 @@ class ModuleInstance extends InstanceBase {
 			name: v.entity_name || prev?.name || '',
 			model,
 			serial: v.serial_number || prev?.serial || '',
+		}
+		if (prev) Object.assign(prev, entry)
+		else this._mdnsDevices.push(entry)
+
+		this._lastDeviceArrivalAt = Date.now()
+		this._confirmedKeys?.add(key)
+		this._rememberLabel(key, entry.name, entry.model, host, port)
+		this._scheduleCacheWrite()
+
+		this._maybeStartSubscribe()
+		this._scheduleActionsRefresh()
+		this._scheduleFeedbacksRefresh()
+		this._scheduleVariablesRefresh()
+		this._refreshDiscoveryStatus()
+	}
+
+	_onMdnsDiscovered(d) {
+		const key = d.entity_id // 'mslg:<serial|mac|host>'
+		const host = d.host
+		const port = d.port || DEFAULT_PHYSICAL_PORT
+		const serial = d.serial || ''
+		const mac = (d.mac || '').toLowerCase()
+
+		// Avoid double-listing a unit another source already found: if an entry
+		// from ATDECC (or the virtual scan) carries the same MAC or serial, let
+		// it stand rather than adding an mDNS twin. On a control network ATDECC
+		// finds nothing, so there is normally nothing to twin and the mDNS entry
+		// is what surfaces the device.
+		const twin = this._mdnsDevices.find(
+			(e) => e.key !== key && ((mac && e.mac && e.mac === mac) || (serial && e.serial && e.serial === serial)),
+		)
+		if (twin) return
+
+		const prev = this._mdnsDevices.find((e) => e.key === key)
+		const entry = {
+			key,
+			host,
+			port,
+			name: d.entity_name || prev?.name || '',
+			model: d.model || prev?.model || '',
+			serial: serial || prev?.serial || '',
+			mac: mac || prev?.mac || '',
 		}
 		if (prev) Object.assign(prev, entry)
 		else this._mdnsDevices.push(entry)

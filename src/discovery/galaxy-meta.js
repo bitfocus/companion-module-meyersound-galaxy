@@ -20,11 +20,7 @@ function macToIPv6LinkLocal(mac, scope) {
 	}
 	const inverted = bytes.slice()
 	inverted[0] ^= 0x02
-	const eui64 = [
-		inverted[0], inverted[1], inverted[2],
-		0xff, 0xfe,
-		inverted[3], inverted[4], inverted[5],
-	]
+	const eui64 = [inverted[0], inverted[1], inverted[2], 0xff, 0xfe, inverted[3], inverted[4], inverted[5]]
 	const grp = []
 	for (let i = 0; i < 8; i += 2) {
 		const v = (eui64[i] << 8) | eui64[i + 1]
@@ -48,10 +44,10 @@ function macToIPv6LinkLocal(mac, scope) {
 //                  ignored here for naming.
 const MODEL_ID_PATTERN = /^001cabb80400([3458])0[0-9a-f]{2}$/
 const MODEL_BY_SELECTOR = {
-	'3': 'Galaxy 408',
-	'4': 'Galaxy 816',
-	'5': 'Galaxy 816-AES',
-	'8': 'Galaxy Bluehorn',
+	3: 'Galaxy 408',
+	4: 'Galaxy 816',
+	5: 'Galaxy 816-AES',
+	8: 'Galaxy Bluehorn',
 }
 
 function modelNameFromEntityModelId(idHex) {

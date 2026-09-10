@@ -28,6 +28,16 @@ endif
 PLATFORM ?= unknown
 OUT      := prebuilt/galaxy-discovery-helper-$(PLATFORM)
 
+# Linux helpers are linked statically so one binary runs on any glibc
+# (Raspberry Pi OS Bullseye ships 2.31, Bookworm 2.36, Ubuntu 24.04 2.39 —
+# a dynamic build made on a newer distro fails with "GLIBC_2.34 not found"
+# on an older one). -s strips symbols to keep the tarball small. macOS has
+# no static libc, so Darwin builds stay dynamic.
+LINUX_LDFLAGS := -static -s
+ifeq ($(UNAME_S),Linux)
+  LDFLAGS += $(LINUX_LDFLAGS)
+endif
+
 # ---- Linux arm64 cross-compile (run from an x64 host) -----------------
 # Requires gcc-aarch64-linux-gnu installed on the build host.
 CROSS_CC_ARM64 ?= aarch64-linux-gnu-gcc
@@ -51,7 +61,7 @@ native: $(OUT)
 
 $(OUT): $(SRC) Makefile
 	@mkdir -p prebuilt
-	$(CC) $(CFLAGS) $(SRC) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $(SRC) -o $@
 	@echo "built -> $@"
 
 # Linux arm64 cross-compile target.
@@ -59,7 +69,7 @@ linux-arm64: $(CROSS_OUT_ARM64)
 
 $(CROSS_OUT_ARM64): $(SRC) Makefile
 	@mkdir -p prebuilt
-	$(CROSS_CC_ARM64) $(CFLAGS) $(SRC) -o $@
+	$(CROSS_CC_ARM64) $(CFLAGS) $(LINUX_LDFLAGS) $(SRC) -o $@
 	@echo "built -> $@"
 
 # Windows x64 cross-compile via mingw. NPCAP_SDK must be set.

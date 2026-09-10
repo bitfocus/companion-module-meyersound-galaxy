@@ -50,6 +50,11 @@ class DiscoveryHelper extends EventEmitter {
 		this.expireTimer = null
 		this.restartTimer = null
 		this.expectedExit = false
+		this.bin = null
+		this.spawnFailed = false
+		this.lastErrorMsg = ''
+		this.failCount = 0 // consecutive exits without reaching 'ready'
+		this.gaveUp = false
 	}
 
 	start() {
@@ -62,9 +67,12 @@ class DiscoveryHelper extends EventEmitter {
 		}
 
 		const bin = helperBinaryPath()
+		this.bin = bin
 		this.log('info', `spawning ${bin}`)
 		this.expectedExit = false
 		this.gotReady = false
+		this.spawnFailed = false
+		this.lastErrorMsg = ''
 
 		try {
 			this.proc = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -78,6 +86,25 @@ class DiscoveryHelper extends EventEmitter {
 
 		this.rl = readline.createInterface({ input: this.proc.stdout })
 		this.rl.on('line', (line) => this._onLine(line))
+
+		// spawn() itself never throws for a missing/unexecutable binary — Node
+		// reports that asynchronously here (ENOENT: no prebuilt for this
+		// platform/arch, EACCES: exec bit lost). Without this listener the
+		// 'error' event is unhandled and takes the whole module process down.
+		// Neither condition fixes itself, so we don't restart; the manual
+		// address field and the discovery cache keep working.
+		this.proc.on('error', (e) => {
+			this.spawnFailed = true
+			this.log('error', `discovery helper could not be started (${e.code || e.message}): ${bin}`)
+			this.emit('helper-error', `spawn failed: ${e.message}`)
+			try {
+				this.rl?.close()
+			} catch (_) {
+				/* ignore */
+			}
+			this.rl = null
+			this.proc = null
+		})
 
 		this.proc.stderr.on('data', (chunk) => {
 			const txt = chunk.toString('utf8').trimEnd()
@@ -102,17 +129,47 @@ class DiscoveryHelper extends EventEmitter {
 				/* ignore */
 			}
 			this.rl = null
-			if (!this.expectedExit) {
-				this.emit('helper-exit', { code, signal, unexpected: true })
-				this.restartTimer = setTimeout(() => this.start(), 3000)
-			} else {
+			if (this.expectedExit) {
 				this.emit('helper-exit', { code, signal, unexpected: false })
+			} else if (!this.spawnFailed) {
+				this._scheduleRestart(code, signal)
 			}
 		})
 
 		if (!this.expireTimer) {
 			this.expireTimer = setInterval(() => this._expireDevices(), 5000)
 		}
+	}
+
+	// Decide whether/when to restart after an unexpected exit. A helper that
+	// never reached 'ready' because of a permission problem will fail the
+	// same way every time, so retrying only spams the log — give up once and
+	// say exactly what to do. Anything else (e.g. no interface up yet while
+	// the machine is still booting) is retried with exponential backoff.
+	_scheduleRestart(code, signal) {
+		this.failCount = this.gotReady ? 0 : this.failCount + 1
+		const permDenied = !this.gotReady && /permission denied/i.test(this.lastErrorMsg)
+		if (permDenied) {
+			this.gaveUp = true
+			let how = ''
+			if (process.platform === 'linux') {
+				how = ` Run: sudo setcap cap_net_raw=eip "${this.bin}" — then disable and re-enable this connection.`
+			} else if (process.platform === 'darwin') {
+				how = ' Add this user to the access_bpf group (see the earlier hint), then log out and back in.'
+			}
+			this.log(
+				'error',
+				'Auto-discovery is disabled: the discovery helper has no permission to open a raw socket and ' +
+					'restarting it will not help.' +
+					how +
+					' Until then, type the Galaxy address into the "IPv4 / IPv6 / mDNS address" field.',
+			)
+			this.emit('helper-exit', { code, signal, unexpected: true, willRestart: false, attempt: this.failCount })
+			return
+		}
+		const delayMs = Math.min(3000 * 2 ** Math.min(Math.max(this.failCount - 1, 0), 4), 30000) // 3s,6s,12s,24s,30s
+		this.emit('helper-exit', { code, signal, unexpected: true, willRestart: true, attempt: this.failCount, delayMs })
+		this.restartTimer = setTimeout(() => this.start(), delayMs)
 	}
 
 	_logPrerequisiteHint(exitCode) {
@@ -151,13 +208,15 @@ class DiscoveryHelper extends EventEmitter {
 				'warn',
 				'Discovery helper exited before reporting ready. If the ' +
 					'preceding error mentioned EPERM, grant the helper binary ' +
-					'CAP_NET_RAW: sudo setcap cap_net_raw=eip <path-to-helper>.',
+					`CAP_NET_RAW: sudo setcap cap_net_raw=eip "${this.bin}"`,
 			)
 		}
 	}
 
 	stop() {
 		this.expectedExit = true
+		this.gaveUp = false
+		this.failCount = 0
 		if (this.restartTimer) {
 			clearTimeout(this.restartTimer)
 			this.restartTimer = null
@@ -198,6 +257,7 @@ class DiscoveryHelper extends EventEmitter {
 		switch (msg.event) {
 			case 'ready':
 				this.gotReady = true
+				this.failCount = 0
 				this.emit('ready', msg)
 				return
 			case 'sent_discover':
@@ -207,6 +267,7 @@ class DiscoveryHelper extends EventEmitter {
 				this._onAdp(msg)
 				return
 			case 'error':
+				this.lastErrorMsg = String(msg.msg || '')
 				this.log('warn', `helper error: ${msg.msg}`)
 				this.emit('helper-error', msg.msg)
 				return

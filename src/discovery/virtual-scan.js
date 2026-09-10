@@ -44,11 +44,8 @@ function extractRhs(line) {
 	const eq = line.indexOf('=')
 	if (eq < 0) return undefined
 	const rhs = line.slice(eq + 1).trim()
-	if (
-		rhs.length >= 2 &&
-		((rhs.startsWith("'") && rhs.endsWith("'")) ||
-			(rhs.startsWith('"') && rhs.endsWith('"')))
-	) return rhs.slice(1, -1)
+	if (rhs.length >= 2 && ((rhs.startsWith("'") && rhs.endsWith("'")) || (rhs.startsWith('"') && rhs.endsWith('"'))))
+		return rhs.slice(1, -1)
 	return rhs
 }
 
@@ -62,7 +59,11 @@ function probePort(host, port) {
 			if (done) return
 			done = true
 			clearTimeout(timer)
-			try { sock.destroy() } catch (_) { /* ignore */ }
+			try {
+				sock.destroy()
+			} catch (_) {
+				/* ignore */
+			}
 			resolve(val)
 		}
 		const timer = setTimeout(() => finish(null), PROBE_TIMEOUT_MS)
@@ -103,11 +104,15 @@ function probePort(host, port) {
 		})
 		sock.connect(port, host, () => {
 			try {
-				sock.write(Buffer.from(
-					`${ENTITY_ID_ADDR}${TX_EOL}${ENTITY_NAME_ADDR}${TX_EOL}${ENTITY_MODEL_ID_ADDR}${TX_EOL}${MODEL_STRING_ADDR}${TX_EOL}${SERIAL_NUMBER_ADDR}${TX_EOL}`,
-					'utf8',
-				))
-			} catch (_) { finish(null) }
+				sock.write(
+					Buffer.from(
+						`${ENTITY_ID_ADDR}${TX_EOL}${ENTITY_NAME_ADDR}${TX_EOL}${ENTITY_MODEL_ID_ADDR}${TX_EOL}${MODEL_STRING_ADDR}${TX_EOL}${SERIAL_NUMBER_ADDR}${TX_EOL}`,
+						'utf8',
+					),
+				)
+			} catch (_) {
+				finish(null)
+			}
 		})
 	})
 }
@@ -132,7 +137,10 @@ class VirtualGalaxyScanner extends EventEmitter {
 	}
 
 	stop() {
-		if (this.timer) { clearInterval(this.timer); this.timer = null }
+		if (this.timer) {
+			clearInterval(this.timer)
+			this.timer = null
+		}
 		for (const dev of this.known.values()) this.emit('virtual-removed', dev)
 		this.known.clear()
 	}
@@ -181,11 +189,7 @@ class VirtualGalaxyScanner extends EventEmitter {
 			// we've scanned for AUTO_DISABLE_AFTER_MS without ever finding
 			// one, stop the periodic timer to avoid burning 21 TCP connects
 			// every interval forever.
-			if (
-				this.timer &&
-				!this._everFound &&
-				now - this._startedAt >= AUTO_DISABLE_AFTER_MS
-			) {
+			if (this.timer && !this._everFound && now - this._startedAt >= AUTO_DISABLE_AFTER_MS) {
 				clearInterval(this.timer)
 				this.timer = null
 			}
