@@ -39,6 +39,14 @@ const RECONNECT_MAX_DELAY_MS = 30000 // Maximum delay between reconnection attem
 const CMD_SOCKET_TIMEOUT_MS = 1500 // Time to keep command socket alive after last command
 const CMD_SOCKET_RETRY_MS = 800 // Delay before retrying failed command socket connection
 const CONNECT_TIMEOUT_MS = 8000 // Abort a stuck TCP connect instead of waiting for the OS (~75s)
+// Liveness: a reboot / power-loss usually drops the link without a TCP FIN/RST,
+// so 'close'/'error' never fire and the status would otherwise stay green. We
+// send a cheap bare read every HEARTBEAT_MS (forces a reply even on an idle
+// subscription) and, if no data arrives for SUB_STALE_MS, tear the socket down
+// so the reconnect/backoff takes over. One tiny read + reply every 2s per
+// connection — negligible traffic, ~6s detection.
+const HEARTBEAT_MS = 2000
+const SUB_STALE_MS = 6000
 const METER_BATCH_INTERVAL_MS = 100 // Batch meter updates to reduce UI thrashing
 const UI_REFRESH_DEBOUNCE_MS = 150 // Debounce delay for actions/feedbacks/variables refresh
 const PRESET_REFRESH_DEBOUNCE_MS = 250 // Debounce delay for preset refresh (slightly longer)
@@ -147,6 +155,10 @@ class ModuleInstance extends InstanceBase {
 		this._reconnectAttempts = 0
 		this._reconnectDelay = RECONNECT_DELAY_MS
 		this._destroyed = false
+		// Subscription liveness (heartbeat + watchdog)
+		this._lastRxAt = 0
+		this._heartbeatTimer = null
+		this._watchdogTimer = null
 
 		// meters (dBFS)
 		this.inputMeter = {} // { ch: number }
@@ -408,6 +420,7 @@ class ModuleInstance extends InstanceBase {
 		clearTimeout(this._matrixSummaryTimer)
 		this._matrixSummaryTimer = null
 
+		this._stopSubHealth()
 		try {
 			this.subSock?.destroy()
 		} catch {}
@@ -474,6 +487,7 @@ class ModuleInstance extends InstanceBase {
 			config.auto_key !== prevKey || (config.auto_key === '__manual__' && config.manual_host !== prevHost)
 
 		if (targetChanged) {
+			this._stopSubHealth()
 			try {
 				this.subSock?.destroy()
 			} catch {}
@@ -590,6 +604,7 @@ class ModuleInstance extends InstanceBase {
 			// advanced twice and we don't spawn parallel reconnect chains.
 			if (this.subSock !== sock) return
 			this.subSock = null
+			this._stopSubHealth()
 			try {
 				sock.destroy()
 			} catch {}
@@ -612,6 +627,8 @@ class ModuleInstance extends InstanceBase {
 		sock.on('close', reconnect)
 
 		sock.on('data', (chunk) => {
+			// Any inbound byte proves the link is alive — feeds the liveness watchdog.
+			this._lastRxAt = Date.now()
 			// Galaxy sometimes accepts the TCP connection and immediately closes it when at
 			// max clients. Only reset the reconnect backoff when we actually receive data —
 			// that proves we have a real, working connection.
@@ -636,6 +653,11 @@ class ModuleInstance extends InstanceBase {
 		sock.setTimeout(CONNECT_TIMEOUT_MS, () => sock.destroy())
 		sock.connect(port, host, () => {
 			sock.setTimeout(0)
+			try {
+				sock.setKeepAlive(true, 10000)
+			} catch {}
+			this._lastRxAt = Date.now()
+			this._startSubHealth(sock)
 			this._refreshDiscoveryStatus()
 
 			// Subscribe inputs
@@ -983,6 +1005,40 @@ class ModuleInstance extends InstanceBase {
 			this._subWrite(`+${bootAddr}`)
 			this._subWrite(bootAddr)
 		})
+	}
+
+	// Liveness for the subscription socket. A bare read on an already-subscribed
+	// path forces the Galaxy to reply even when nothing has changed, so a healthy
+	// link produces data at least every HEARTBEAT_MS. The watchdog trips when
+	// that stops (device rebooting / powered off / cable pulled) and destroys the
+	// socket, which fires 'close' and hands off to the reconnect/backoff logic.
+	_startSubHealth(sock) {
+		this._stopSubHealth()
+		this._heartbeatTimer = setInterval(() => {
+			if (this.subSock !== sock) return
+			this._subWrite(MODEL_STRING_PATH)
+		}, HEARTBEAT_MS)
+		this._watchdogTimer = setInterval(() => {
+			if (this.subSock !== sock) return
+			const silent = Date.now() - this._lastRxAt
+			if (silent < SUB_STALE_MS) return
+			this.log?.('warn', `Galaxy silent for ${Math.round(silent / 1000)}s — assuming offline, reconnecting`)
+			this.updateStatus(InstanceStatus.Disconnected, 'No response — device offline?')
+			try {
+				sock.destroy() // -> 'close' -> reconnect() with backoff
+			} catch {}
+		}, 1000)
+	}
+
+	_stopSubHealth() {
+		if (this._heartbeatTimer) {
+			clearInterval(this._heartbeatTimer)
+			this._heartbeatTimer = null
+		}
+		if (this._watchdogTimer) {
+			clearInterval(this._watchdogTimer)
+			this._watchdogTimer = null
+		}
 	}
 
 	_subWrite(cmd) {
