@@ -10,6 +10,7 @@ const path = require('node:path')
 const readline = require('node:readline')
 const { EventEmitter } = require('node:events')
 const fs = require('node:fs')
+const { isMeyerEntity } = require('./galaxy-meta')
 
 // Resolved relative to the running main.js so it works in both modes:
 //   - dev mode    → <module>/helper/prebuilt   (main.js lives in <module>/src,
@@ -54,6 +55,7 @@ class DiscoveryHelper extends EventEmitter {
 		this.spawnFailed = false
 		this.lastErrorMsg = ''
 		this.failCount = 0 // consecutive exits without reaching 'ready'
+		this.ignoredIds = new Set() // non-Meyer entities already reported once
 		this.gaveUp = false
 	}
 
@@ -244,6 +246,7 @@ class DiscoveryHelper extends EventEmitter {
 		}
 		this.rl = null
 		this.devices.clear()
+		this.ignoredIds.clear()
 	}
 
 	_onLine(line) {
@@ -297,6 +300,17 @@ class DiscoveryHelper extends EventEmitter {
 			if (existing) {
 				this.devices.delete(id)
 				this.emit('device-removed', existing)
+			}
+			return
+		}
+
+		// ATDECC is vendor-neutral: other MILAN/AVB gear on the LAN announces the
+		// same way. Only Meyer entities can be a Galaxy — drop the rest so they
+		// never show up in the "Galaxy to control" list.
+		if (!isMeyerEntity(record)) {
+			if (!this.ignoredIds.has(id)) {
+				this.ignoredIds.add(id)
+				this.log('debug', `ignoring non-Meyer ATDECC entity ${id} (model ${record.entity_model_id || 'n/a'})`)
 			}
 			return
 		}

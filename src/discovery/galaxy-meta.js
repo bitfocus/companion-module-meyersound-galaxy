@@ -58,4 +58,29 @@ function modelNameFromEntityModelId(idHex) {
 	return idHex || 'Galaxy (unknown model)'
 }
 
-module.exports = { macToIPv6LinkLocal, modelNameFromEntityModelId }
+// Meyer Sound's IEEE OUI. ATDECC is a shared discovery protocol: every MILAN /
+// AVB device on the LAN (amplifiers, stage boxes, other vendors' processors)
+// announces itself the same way, so the discovery helper hears all of them.
+// Only Meyer entities can be a Galaxy.
+const MEYER_OUI_HEX = '001cab'
+const MEYER_OUI_MAC = '00:1c:ab'
+
+/**
+ * True when an ATDECC ADP record comes from a Meyer Sound device.
+ * The vendor OUI leads the entity_model_id; if a device reports no model id
+ * (empty / all zero) fall back to the OUI in its entity_id or source MAC.
+ */
+function isMeyerEntity({ entity_model_id, entity_id, src_mac } = {}) {
+	const model = String(entity_model_id || '').toLowerCase()
+	if (model && !/^0+$/.test(model)) return model.startsWith(MEYER_OUI_HEX)
+	return (
+		String(entity_id || '')
+			.toLowerCase()
+			.startsWith(MEYER_OUI_HEX) ||
+		String(src_mac || '')
+			.toLowerCase()
+			.startsWith(MEYER_OUI_MAC)
+	)
+}
+
+module.exports = { macToIPv6LinkLocal, modelNameFromEntityModelId, isMeyerEntity }
